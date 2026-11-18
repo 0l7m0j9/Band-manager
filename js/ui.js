@@ -84,8 +84,8 @@ const UI = (() => {
     return { form, close };
   }
 
-  function confirm(msg, onYes) {
-    modal({ title: '확인', body: `<p>${msg}</p>`, submit: '삭제', onSubmit: () => { onYes(); } });
+  function confirm(msg, onYes, label = '삭제') {
+    modal({ title: '확인', body: `<p>${msg}</p>`, submit: label, onSubmit: () => { onYes(); } });
   }
 
   /** 이미지 파일 → 리사이즈된 dataURL */
@@ -127,7 +127,15 @@ const UI = (() => {
     scroller.scrollLeft += (r.left + r.width / 2) - (s.left + s.width / 2);
   }
 
+  /** 보기 전용 화면: 수정 버튼은 숨기고 입력칸은 잠금 (data-ro 가 붙은 것은 그대로 둠) */
+  function readOnly(root) {
+    root.classList.add('ro');
+    root.querySelectorAll('.btn:not([data-ro]), .mv, .task-add, .card-del').forEach((x) => { x.style.display = 'none'; });
+    root.querySelectorAll('input:not([data-ro]), select:not([data-ro]), textarea:not([data-ro]), .vote').forEach((x) => { x.disabled = true; });
+    root.querySelectorAll('[draggable="true"]').forEach((x) => { x.draggable = false; x.style.cursor = 'default'; });
+  }
+
   const empty = (word, msg, action = '') => `<div class="empty"><span class="wave">${word}</span><p>${msg}</p>${action ? `<div style="margin-top:14px">${action}</div>` : ''}</div>`;
 
-  return { esc, dur, parseDur, hm, parseHm, dateKo, dateEn, addDays, initials, MOODS, INSTRUMENTS, logo, diff, toast, modal, confirm, readImage, download, shareCanvas, empty, centerActive };
+  return { esc, dur, parseDur, hm, parseHm, dateKo, dateEn, addDays, initials, MOODS, INSTRUMENTS, logo, diff, toast, modal, confirm, readImage, download, shareCanvas, empty, centerActive, readOnly };
 })();

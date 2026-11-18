@@ -342,3 +342,531 @@ begin
     alter publication supabase_realtime add table public.profiles;
   end if;
 end $$;
+
+
+-- #########################################################################
+-- v2 — 그룹 · 계급(관리자 > 단장 > 부원) · 밴드 · 일정 · 연습실 · 게시판
+--
+-- 위의 v1(친구 공유, app_state)은 지우지 않고 그대로 둡니다. 예전 데이터는
+-- 앱의 "예전 데이터 가져오기"로 필요할 때 새 구조로 옮겨 쓸 수 있습니다.
+--
+-- 계급
+--   관리자 : group_members.role = 'admin'  → 그룹의 모든 권한 (밴드 단장 권한 포함)
+--   단장   : band_members.role = 'leader'  → 자기 밴드의 모든 정보 수정 + 가입 승인
+--   부원   : 그 외 → 자기 밴드 내용 보기, 개인 일정만 수정
+--
+-- 최초 관리자 지정 (SQL Editor 에서 한 번, 가입한 아이디로):
+--   select public.bootstrap_admin('아이디');
+-- #########################################################################
+
+-- ---------- tables ----------
+create table if not exists public.groups (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null unique,
+  created_at timestamptz not null default now()
+);
+insert into public.groups (name) values ('김포 고등학교') on conflict (name) do nothing;
+
+alter table public.profiles add column if not exists full_name   text;
+alter table public.profiles add column if not exists instruments text[] not null default '{}';
+
+-- 전화번호는 본인과 관리자만 볼 수 있게 별도 표
+create table if not exists public.profile_private (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  phone   text
+);
+
+create table if not exists public.group_members (
+  group_id  uuid not null references public.groups(id) on delete cascade,
+  user_id   uuid not null references public.profiles(id) on delete cascade,
+  role      text not null default 'member' check (role in ('admin', 'member')),
+  joined_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+-- 밴드 목록(이름·장르 등)은 그룹 전원이 보고, 내용(band_docs)은 밴드원·관리자만
+create table if not exists public.bands (
+  id         uuid primary key default gen_random_uuid(),
+  group_id   uuid not null references public.groups(id) on delete cascade,
+  name       text not null,
+  genre      text not null default '',
+  color      text not null default '#111111',
+  logo       text not null default '',
+  bio        text not null default '',
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+-- 밴드 내용: { band:{founded,log}, songs, setlists, rehearsals, tasks, gigs } (JSON 한 덩어리, rev 로 충돌 감지)
+create table if not exists public.band_docs (
+  band_id    uuid primary key references public.bands(id) on delete cascade,
+  data       jsonb not null default '{}'::jsonb,
+  rev        bigint not null default 0,
+  updated_at timestamptz not null default now(),
+  client_id  text
+);
+
+create table if not exists public.band_members (
+  band_id      uuid not null references public.bands(id) on delete cascade,
+  user_id      uuid not null references public.profiles(id) on delete cascade,
+  role         text not null default 'member' check (role in ('leader', 'member')),
+  status       text not null default 'pending' check (status in ('pending', 'approved')),
+  part         text not null default '',   -- 이 밴드에서 맡은 파트
+  position     text not null default '',   -- 리더/총무 등
+  requested_at timestamptz not null default now(),
+  primary key (band_id, user_id)
+);
+
+-- 페스티벌: 관리자만 직접 읽고 씀. 부원은 published_festivals() 로 공개된 부분만
+create table if not exists public.festivals (
+  id         uuid primary key default gen_random_uuid(),
+  group_id   uuid not null references public.groups(id) on delete cascade,
+  data       jsonb not null default '{}'::jsonb,
+  published  jsonb not null default '{}'::jsonb,  -- { info, lineup, timetable, poster, stage, setlists : true/false }
+  rev        bigint not null default 0,
+  updated_at timestamptz not null default now(),
+  client_id  text
+);
+
+-- 그룹 일정(관리자) · 개인 일정(본인). 밴드 일정은 밴드 내용(합주·공연)과 연습실 예약에서
+create table if not exists public.events (
+  id         uuid primary key default gen_random_uuid(),
+  group_id   uuid not null references public.groups(id) on delete cascade,
+  scope      text not null check (scope in ('group', 'personal')),
+  owner      uuid references public.profiles(id) on delete cascade,
+  title      text not null,
+  date       date not null,
+  start_time text,            -- 'HH:MM', null 이면 하루 종일
+  end_time   text,
+  note       text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.rooms (
+  id       uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  name     text not null,
+  sort     int not null default 0
+);
+insert into public.rooms (group_id, name)
+select g.id, '음악실' from public.groups g
+where g.name = '김포 고등학교' and not exists (select 1 from public.rooms r where r.group_id = g.id);
+
+create table if not exists public.reservations (
+  id           uuid primary key default gen_random_uuid(),
+  group_id     uuid not null references public.groups(id) on delete cascade,
+  room_id      uuid not null references public.rooms(id) on delete cascade,
+  band_id      uuid not null references public.bands(id) on delete cascade,
+  date         date not null,
+  start_time   text not null,
+  end_time     text not null,
+  note         text not null default '',
+  status       text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  requested_by uuid references public.profiles(id) on delete set null,
+  decided_by   uuid references public.profiles(id) on delete set null,
+  created_at   timestamptz not null default now()
+);
+
+create table if not exists public.posts (
+  id         uuid primary key default gen_random_uuid(),
+  group_id   uuid not null references public.groups(id) on delete cascade,
+  author     uuid references public.profiles(id) on delete set null,
+  title      text not null,
+  body       text not null default '',
+  images     jsonb not null default '[]'::jsonb,
+  pinned     boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists band_members_user_idx on public.band_members (user_id);
+create index if not exists group_members_user_idx on public.group_members (user_id);
+create index if not exists reservations_room_date_idx on public.reservations (room_id, date);
+create index if not exists events_group_date_idx on public.events (group_id, date);
+
+-- ---------- 권한 확인 함수 (RLS 에서 사용) ----------
+create or replace function public.is_group_member(g uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.group_members where group_id = g and user_id = auth.uid())
+$$;
+create or replace function public.is_group_admin(g uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.group_members where group_id = g and user_id = auth.uid() and role = 'admin')
+$$;
+create or replace function public.band_group(b uuid) returns uuid
+language sql stable security definer set search_path = public as $$
+  select group_id from public.bands where id = b
+$$;
+create or replace function public.is_band_member(b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.band_members where band_id = b and user_id = auth.uid() and status = 'approved')
+$$;
+create or replace function public.is_band_leader(b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.band_members where band_id = b and user_id = auth.uid() and status = 'approved' and role = 'leader')
+$$;
+create or replace function public.can_edit_band(b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_band_leader(b) or public.is_group_admin(public.band_group(b))
+$$;
+create or replace function public.can_read_band(b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_band_member(b) or public.is_group_admin(public.band_group(b))
+$$;
+-- 나와 같은 그룹에 있는 회원인지
+create or replace function public.shares_group(u uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.group_members a join public.group_members b on a.group_id = b.group_id
+                 where a.user_id = auth.uid() and b.user_id = u)
+$$;
+-- 내가 그 회원이 속한 그룹의 관리자인지 (전화번호 열람용)
+create or replace function public.admin_of_user(u uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.group_members a join public.group_members b on a.group_id = b.group_id
+                 where a.user_id = auth.uid() and a.role = 'admin' and b.user_id = u)
+$$;
+
+-- ---------- RLS ----------
+alter table public.groups          enable row level security;
+alter table public.profile_private enable row level security;
+alter table public.group_members   enable row level security;
+alter table public.bands           enable row level security;
+alter table public.band_docs       enable row level security;
+alter table public.band_members    enable row level security;
+alter table public.festivals       enable row level security;
+alter table public.events          enable row level security;
+alter table public.rooms           enable row level security;
+alter table public.reservations    enable row level security;
+alter table public.posts           enable row level security;
+
+revoke all on public.profile_private, public.group_members, public.bands, public.band_docs,
+              public.band_members, public.festivals, public.events, public.rooms, public.reservations, public.posts from anon;
+
+-- 그룹 이름은 회원가입 화면(로그인 전)에서도 고를 수 있게 공개
+drop policy if exists "groups read" on public.groups;
+create policy "groups read" on public.groups for select to anon, authenticated using (true);
+revoke insert, update, delete on public.groups from anon, authenticated;
+grant select on public.groups to anon, authenticated;
+
+drop policy if exists "profiles read group" on public.profiles;
+create policy "profiles read group" on public.profiles for select to authenticated using (public.shares_group(id));
+
+drop policy if exists "private read" on public.profile_private;
+create policy "private read" on public.profile_private for select to authenticated using (user_id = auth.uid() or public.admin_of_user(user_id));
+revoke insert, update, delete on public.profile_private from authenticated;
+
+drop policy if exists "gm read" on public.group_members;
+create policy "gm read" on public.group_members for select to authenticated using (public.is_group_member(group_id));
+revoke insert, update, delete on public.group_members from authenticated;
+
+drop policy if exists "bands read"   on public.bands;
+drop policy if exists "bands update" on public.bands;
+drop policy if exists "bands delete" on public.bands;
+create policy "bands read"   on public.bands for select to authenticated using (public.is_group_member(group_id));
+create policy "bands update" on public.bands for update to authenticated using (public.can_edit_band(id)) with check (public.can_edit_band(id));
+create policy "bands delete" on public.bands for delete to authenticated using (public.is_group_admin(group_id));
+revoke insert, update on public.bands from authenticated;
+grant update (name, genre, color, logo, bio) on public.bands to authenticated;
+
+drop policy if exists "docs read"   on public.band_docs;
+drop policy if exists "docs update" on public.band_docs;
+create policy "docs read"   on public.band_docs for select to authenticated using (public.can_read_band(band_id));
+create policy "docs update" on public.band_docs for update to authenticated using (public.can_edit_band(band_id)) with check (public.can_edit_band(band_id));
+revoke insert, update, delete on public.band_docs from authenticated;
+grant update (data, rev, updated_at, client_id) on public.band_docs to authenticated;
+
+-- 승인된 밴드원 명단은 그룹 전원이, 대기 중 신청은 본인·단장·관리자만
+drop policy if exists "bm read" on public.band_members;
+create policy "bm read" on public.band_members for select to authenticated using (
+  (status = 'approved' and public.is_group_member(public.band_group(band_id)))
+  or user_id = auth.uid() or public.can_edit_band(band_id));
+revoke insert, update, delete on public.band_members from authenticated;
+
+drop policy if exists "fest admin read"   on public.festivals;
+drop policy if exists "fest admin insert" on public.festivals;
+drop policy if exists "fest admin update" on public.festivals;
+drop policy if exists "fest admin delete" on public.festivals;
+create policy "fest admin read"   on public.festivals for select to authenticated using (public.is_group_admin(group_id));
+create policy "fest admin insert" on public.festivals for insert to authenticated with check (public.is_group_admin(group_id));
+create policy "fest admin update" on public.festivals for update to authenticated using (public.is_group_admin(group_id)) with check (public.is_group_admin(group_id));
+create policy "fest admin delete" on public.festivals for delete to authenticated using (public.is_group_admin(group_id));
+
+drop policy if exists "events read"  on public.events;
+drop policy if exists "events write" on public.events;
+drop policy if exists "events edit"  on public.events;
+drop policy if exists "events del"   on public.events;
+create policy "events read" on public.events for select to authenticated using (
+  (scope = 'group' and public.is_group_member(group_id)) or (scope = 'personal' and owner = auth.uid()));
+create policy "events write" on public.events for insert to authenticated with check (
+  (scope = 'personal' and owner = auth.uid() and public.is_group_member(group_id))
+  or (scope = 'group' and public.is_group_admin(group_id)));
+create policy "events edit" on public.events for update to authenticated
+  using ((scope = 'personal' and owner = auth.uid()) or (scope = 'group' and public.is_group_admin(group_id)))
+  with check ((scope = 'personal' and owner = auth.uid()) or (scope = 'group' and public.is_group_admin(group_id)));
+create policy "events del" on public.events for delete to authenticated using (
+  (scope = 'personal' and owner = auth.uid()) or (scope = 'group' and public.is_group_admin(group_id)));
+
+drop policy if exists "rooms read"  on public.rooms;
+drop policy if exists "rooms admin" on public.rooms;
+create policy "rooms read"  on public.rooms for select to authenticated using (public.is_group_member(group_id));
+create policy "rooms admin" on public.rooms for all to authenticated using (public.is_group_admin(group_id)) with check (public.is_group_admin(group_id));
+
+-- 예약: 그룹 전원이 일정 확인 / 단장은 '대기' 상태로 신청·취소 / 관리자는 전부
+drop policy if exists "resv read"   on public.reservations;
+drop policy if exists "resv insert" on public.reservations;
+drop policy if exists "resv update" on public.reservations;
+drop policy if exists "resv delete" on public.reservations;
+create policy "resv read" on public.reservations for select to authenticated using (public.is_group_member(group_id));
+create policy "resv insert" on public.reservations for insert to authenticated with check (
+  public.band_group(band_id) = group_id and (
+    public.is_group_admin(group_id)
+    or (public.is_band_leader(band_id) and status = 'pending' and requested_by = auth.uid())));
+create policy "resv update" on public.reservations for update to authenticated
+  using (public.is_group_admin(group_id)) with check (public.is_group_admin(group_id) and public.band_group(band_id) = group_id);
+create policy "resv delete" on public.reservations for delete to authenticated using (
+  public.is_group_admin(group_id) or (requested_by = auth.uid() and status = 'pending'));
+
+drop policy if exists "posts read"  on public.posts;
+drop policy if exists "posts admin" on public.posts;
+create policy "posts read"  on public.posts for select to authenticated using (public.is_group_member(group_id));
+create policy "posts admin" on public.posts for all to authenticated using (public.is_group_admin(group_id)) with check (public.is_group_admin(group_id));
+
+-- ---------- 예약 검사: 같은 연습실·같은 시간에 승인된 예약이 겹치지 않게 ----------
+create or replace function public.check_reservation() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.start_time !~ '^\d{2}:\d{2}$' or new.end_time !~ '^\d{2}:\d{2}$' or new.end_time <= new.start_time then
+    raise exception '예약 시간이 올바르지 않습니다';
+  end if;
+  if not exists (select 1 from public.rooms where id = new.room_id and group_id = new.group_id) then
+    raise exception '이 그룹의 연습실이 아닙니다';
+  end if;
+  if new.status = 'approved' and exists (
+    select 1 from public.reservations r
+    where r.room_id = new.room_id and r.date = new.date and r.status = 'approved' and r.id <> new.id
+      and r.start_time < new.end_time and new.start_time < r.end_time) then
+    raise exception '같은 시간에 이미 승인된 예약이 있습니다';
+  end if;
+  return new;
+end $$;
+drop trigger if exists reservations_check on public.reservations;
+create trigger reservations_check before insert or update on public.reservations
+  for each row execute function public.check_reservation();
+
+-- ---------- RPC ----------
+
+-- 가입 정보 입력 + 그룹 가입 (회원가입 직후, 또는 기존 회원이 처음 들어올 때)
+create or replace function public.complete_profile(p_name text, p_instruments text[], p_phone text, p_group uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  nm text := left(trim(coalesce(p_name, '')), 30);
+  ins text[];
+begin
+  if auth.uid() is null then raise exception '로그인이 필요합니다'; end if;
+  if length(nm) < 1 then raise exception '이름을 입력하세요'; end if;
+  select coalesce(array_agg(left(trim(x), 20)), '{}') into ins
+    from unnest(coalesce(p_instruments, '{}')) as x where trim(x) <> '';
+  if coalesce(array_length(ins, 1), 0) > 10 then raise exception '악기는 10개까지 입력할 수 있습니다'; end if;
+  if p_phone is not null and trim(p_phone) <> '' and trim(p_phone) !~ '^[0-9+\- ]{7,20}$' then
+    raise exception '전화번호 형식이 올바르지 않습니다';
+  end if;
+  update public.profiles set full_name = nm, nickname = nm, instruments = ins where id = auth.uid();
+  insert into public.profile_private (user_id, phone) values (auth.uid(), nullif(trim(coalesce(p_phone, '')), ''))
+    on conflict (user_id) do update set phone = excluded.phone;
+  if p_group is not null then
+    if not exists (select 1 from public.groups where id = p_group) then raise exception '그룹을 찾을 수 없습니다'; end if;
+    insert into public.group_members (group_id, user_id) values (p_group, auth.uid()) on conflict do nothing;
+  end if;
+end $$;
+
+create or replace function public.join_group(p_group uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception '로그인이 필요합니다'; end if;
+  if not exists (select 1 from public.groups where id = p_group) then raise exception '그룹을 찾을 수 없습니다'; end if;
+  insert into public.group_members (group_id, user_id) values (p_group, auth.uid()) on conflict do nothing;
+end $$;
+
+-- 그룹 회원 명단 (전화번호는 관리자와 본인에게만)
+create or replace function public.group_roster(p_group uuid)
+returns table (user_id uuid, username text, name text, instruments text[], role text, phone text, joined_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select m.user_id, p.username, coalesce(nullif(p.full_name, ''), p.nickname, p.username), p.instruments, m.role,
+         case when public.is_group_admin(p_group) or m.user_id = auth.uid() then pp.phone end,
+         m.joined_at
+  from public.group_members m
+  join public.profiles p on p.id = m.user_id
+  left join public.profile_private pp on pp.user_id = m.user_id
+  where m.group_id = p_group and public.is_group_member(p_group)
+  order by m.role, coalesce(nullif(p.full_name, ''), p.nickname, p.username)
+$$;
+
+-- 공동 관리자 추가/해제 (관리자만, 마지막 관리자는 해제 불가)
+create or replace function public.set_group_admin(p_group uuid, p_user uuid, p_admin boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_group_admin(p_group) then raise exception '관리자만 할 수 있습니다'; end if;
+  if not exists (select 1 from public.group_members where group_id = p_group and user_id = p_user) then
+    raise exception '그룹 회원이 아닙니다';
+  end if;
+  if not p_admin and (select count(*) from public.group_members where group_id = p_group and role = 'admin') <= 1
+     and exists (select 1 from public.group_members where group_id = p_group and user_id = p_user and role = 'admin') then
+    raise exception '마지막 관리자는 해제할 수 없습니다';
+  end if;
+  update public.group_members set role = case when p_admin then 'admin' else 'member' end
+   where group_id = p_group and user_id = p_user;
+end $$;
+
+-- 밴드 만들기: 만든 사람이 단장
+create or replace function public.create_band(p_group uuid, p_name text, p_genre text, p_color text, p_bio text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  bid uuid;
+begin
+  if not public.is_group_member(p_group) then raise exception '그룹 회원만 밴드를 만들 수 있습니다'; end if;
+  if length(trim(coalesce(p_name, ''))) < 1 then raise exception '밴드 이름을 입력하세요'; end if;
+  insert into public.bands (group_id, name, genre, color, bio, created_by)
+  values (p_group, left(trim(p_name), 40), left(coalesce(p_genre, ''), 40),
+          case when p_color ~ '^#[0-9a-fA-F]{6}$' then p_color else '#111111' end, left(coalesce(p_bio, ''), 400), auth.uid())
+  returning id into bid;
+  insert into public.band_docs (band_id, data) values (bid, '{}'::jsonb);
+  insert into public.band_members (band_id, user_id, role, status) values (bid, auth.uid(), 'leader', 'approved');
+  return bid;
+end $$;
+
+-- 밴드 가입 신청 / 취소
+create or replace function public.request_band_join(p_band uuid, p_part text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_group_member(public.band_group(p_band)) then raise exception '그룹 회원만 신청할 수 있습니다'; end if;
+  if exists (select 1 from public.band_members where band_id = p_band and user_id = auth.uid()) then
+    raise exception '이미 신청했거나 참여 중인 밴드입니다';
+  end if;
+  insert into public.band_members (band_id, user_id, role, status, part)
+  values (p_band, auth.uid(), 'member', 'pending', left(coalesce(p_part, ''), 30));
+end $$;
+
+create or replace function public.cancel_band_request(p_band uuid) returns void
+language sql security definer set search_path = public as $$
+  delete from public.band_members where band_id = p_band and user_id = auth.uid() and status = 'pending'
+$$;
+
+-- 가입 승인/거절 (단장·관리자)
+create or replace function public.respond_band_join(p_band uuid, p_user uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_edit_band(p_band) then raise exception '단장만 승인할 수 있습니다'; end if;
+  if p_accept then
+    update public.band_members set status = 'approved' where band_id = p_band and user_id = p_user and status = 'pending';
+  else
+    delete from public.band_members where band_id = p_band and user_id = p_user and status = 'pending';
+  end if;
+end $$;
+
+-- 밴드원 역할·파트·포지션 변경 (단장·관리자). 마지막 단장은 내릴 수 없음
+create or replace function public.set_band_member(p_band uuid, p_user uuid, p_role text, p_part text, p_position text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_edit_band(p_band) then raise exception '단장만 바꿀 수 있습니다'; end if;
+  if p_role not in ('leader', 'member') then raise exception '잘못된 역할입니다'; end if;
+  if p_role = 'member' and exists (select 1 from public.band_members where band_id = p_band and user_id = p_user and role = 'leader')
+     and (select count(*) from public.band_members where band_id = p_band and role = 'leader' and status = 'approved') <= 1 then
+    raise exception '단장이 최소 한 명 있어야 합니다';
+  end if;
+  update public.band_members
+     set role = p_role, part = left(coalesce(p_part, ''), 30), position = left(coalesce(p_position, ''), 30)
+   where band_id = p_band and user_id = p_user and status = 'approved';
+end $$;
+
+-- 밴드원 내보내기 (단장·관리자) 또는 스스로 탈퇴
+create or replace function public.remove_band_member(p_band uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.can_edit_band(p_band) or p_user = auth.uid()) then raise exception '권한이 없습니다'; end if;
+  if exists (select 1 from public.band_members where band_id = p_band and user_id = p_user and role = 'leader')
+     and (select count(*) from public.band_members where band_id = p_band and role = 'leader' and status = 'approved') <= 1
+     and not public.is_group_admin(public.band_group(p_band)) then
+    raise exception '다른 단장을 먼저 지정하세요';
+  end if;
+  delete from public.band_members where band_id = p_band and user_id = p_user;
+end $$;
+
+-- 공개된 페스티벌 (부원용). 공개하지 않은 내용은 빼고 돌려줌
+create or replace function public.published_festivals(p_group uuid)
+returns table (id uuid, published jsonb, data jsonb, updated_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+declare
+  f record;
+  d jsonb;
+  p jsonb;
+  show_acts boolean;
+begin
+  if not public.is_group_member(p_group) then return; end if;
+  for f in select fe.* from public.festivals fe where fe.group_id = p_group order by (fe.data ->> 'startDate') loop
+    p := f.published;
+    if not (coalesce((p ->> 'info')::boolean, false) or coalesce((p ->> 'lineup')::boolean, false)
+            or coalesce((p ->> 'timetable')::boolean, false) or coalesce((p ->> 'poster')::boolean, false)
+            or coalesce((p ->> 'stage')::boolean, false) or coalesce((p ->> 'setlists')::boolean, false)) then
+      continue;
+    end if;
+    d := f.data - 'favorites';
+    show_acts := coalesce((p ->> 'lineup')::boolean, false) or coalesce((p ->> 'timetable')::boolean, false)
+                 or coalesce((p ->> 'poster')::boolean, false) or coalesce((p ->> 'setlists')::boolean, false);
+    if not show_acts then d := d - 'acts'; end if;
+    if not (coalesce((p ->> 'timetable')::boolean, false) or coalesce((p ->> 'poster')::boolean, false)) then d := d - 'slots'; end if;
+    if not coalesce((p ->> 'stage')::boolean, false) then d := d - 'layouts'; end if;
+    if not coalesce((p ->> 'setlists')::boolean, false) then d := d - 'setlists'; end if;
+    if not coalesce((p ->> 'poster')::boolean, false) then d := d - 'poster'; end if;
+    id := f.id; published := p; data := d; updated_at := f.updated_at;
+    return next;
+  end loop;
+end $$;
+
+-- 최초 관리자 지정: SQL Editor 에서만 실행 (앱에서는 호출 불가)
+create or replace function public.bootstrap_admin(p_username text, p_group_name text default '김포 고등학교') returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid;
+  gid uuid;
+begin
+  select id into uid from public.profiles where username = lower(trim(p_username));
+  if uid is null then raise exception '아이디 % 를 찾을 수 없습니다 (먼저 앱에서 회원가입하세요)', p_username; end if;
+  select id into gid from public.groups where name = p_group_name;
+  if gid is null then raise exception '그룹 % 이 없습니다', p_group_name; end if;
+  insert into public.group_members (group_id, user_id, role) values (gid, uid, 'admin')
+    on conflict (group_id, user_id) do update set role = 'admin';
+  return p_username || ' → ' || p_group_name || ' 관리자';
+end $$;
+
+-- 실행 권한: 앱(로그인 회원)이 부를 수 있는 것만
+revoke execute on function public.bootstrap_admin(text, text) from public, anon, authenticated;
+revoke execute on function public.check_reservation() from public, anon, authenticated;
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.is_group_member(uuid)', 'public.is_group_admin(uuid)', 'public.band_group(uuid)', 'public.is_band_member(uuid)',
+    'public.is_band_leader(uuid)', 'public.can_edit_band(uuid)', 'public.can_read_band(uuid)', 'public.shares_group(uuid)',
+    'public.admin_of_user(uuid)', 'public.complete_profile(text, text[], text, uuid)', 'public.join_group(uuid)',
+    'public.group_roster(uuid)', 'public.set_group_admin(uuid, uuid, boolean)', 'public.create_band(uuid, text, text, text, text)',
+    'public.request_band_join(uuid, text)', 'public.cancel_band_request(uuid)', 'public.respond_band_join(uuid, uuid, boolean)',
+    'public.set_band_member(uuid, uuid, text, text, text)', 'public.remove_band_member(uuid, uuid)', 'public.published_festivals(uuid)'
+  ] loop
+    execute format('revoke execute on function %s from public, anon', fn);
+    execute format('grant execute on function %s to authenticated', fn);
+  end loop;
+end $$;
+
+-- ---------- 실시간 반영 ----------
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['group_members', 'bands', 'band_docs', 'band_members', 'festivals', 'events', 'rooms', 'reservations', 'posts'] loop
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;

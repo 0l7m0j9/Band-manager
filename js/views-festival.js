@@ -11,7 +11,7 @@
   const liveF = (f) => f && db().festivals.find((x) => x.id === f.id);
   const gone = () => { toast('다른 곳에서 삭제된 항목이라 저장하지 못했습니다'); };
 
-  const ORIGIN = { mine: 'MY BAND', real: 'REAL', virtual: 'VIRTUAL' };
+  const ORIGIN = { mine: 'OUR BAND', real: 'REAL', virtual: 'VIRTUAL' };
   const actOf = (f, id) => f.acts.find((a) => a.id === id);
   const stageOf = (f, id) => f.stages.find((s) => s.id === id);
   const co = (f, s) => (s.changeover === null || s.changeover === undefined || s.changeover === '' ? Number(f.changeover) || 0 : Number(s.changeover));
@@ -113,20 +113,85 @@
     const f = id === 'active' ? Store.festival() : db().festivals.find((x) => x.id === id);
     if (!f) { el.innerHTML = UI.empty('Oops', '페스티벌을 찾을 수 없습니다.', '<a class="btn solid" href="#/festivals">목록으로</a>'); return; }
     if (db().activeFestivalId !== f.id) { db().activeFestivalId = f.id; Store.save(); }
-    const tabs = [['overview', 'Overview'], ['lineup', 'Lineup'], ['timetable', 'Timetable'], ['poster', 'Poster'], ['stage', 'Stage Designer']];
+    const tabs = [['overview', 'Overview'], ['lineup', 'Lineup'], ['timetable', 'Timetable'], ['poster', 'Poster'], ['stage', 'Stage Designer'], ['setlists', 'Setlists']];
+    const pub = Store.Festivals.publishedOf(f.id);
     el.innerHTML = `
       <div class="page-head">
         <div>
           <div class="eyebrow"><span class="lbl">${dateEn(f.startDate)}${f.days > 1 ? ' – ' + dateEn(addDays(f.startDate, f.days - 1)) : ''}</span><span class="lbl">${esc(f.venue)}</span></div>
           <h1 class="page-title"><span class="tech">FESTIVAL</span>${esc(f.name)}</h1>
         </div>
-        <div class="page-actions"><a class="btn" href="#/personal">Personal →</a><a class="btn ghost" href="#/festivals">All festivals</a></div>
+        <div class="page-actions"><a class="btn ghost" href="#/festivals">All festivals</a></div>
       </div>
-      <nav class="tabs">${tabs.map(([k, v]) => `<a href="#/festival/${f.id}/${k}" class="${k === tab ? 'on' : ''}">${v}</a>`).join('')}</nav>
+      <div class="pub-bar">
+        <span class="lbl muted">회원 Home에 공개</span>
+        ${PUBS.map(([k, label]) => `<label class="switch ${pub[k] ? 'on' : ''} ${PUB_OF[tab] === k ? 'cur' : ''}" title="${label} ${pub[k] ? '공개 중' : '비공개'}"><input type="checkbox" data-pub="${k}" ${pub[k] ? 'checked' : ''}><i></i><span>${label}</span></label>`).join('')}
+      </div>
+      <nav class="tabs">${tabs.map(([k, v]) => `<a href="#/festival/${f.id}/${k}" class="${k === tab ? 'on' : ''}">${v}${pub[PUB_OF[k]] ? ' <span class="pub-dot" title="공개 중"></span>' : ''}</a>`).join('')}</nav>
       <div id="tab"></div>`;
+    el.querySelectorAll('[data-pub]').forEach((c) => c.onchange = async () => {
+      c.disabled = true;
+      try {
+        await Store.flush();
+        await Store.Festivals.setPublished(f.id, c.dataset.pub, c.checked);
+        toast(`${PUBS.find(([k]) => k === c.dataset.pub)[1]} ${c.checked ? '공개 — 회원 Home에 표시됩니다' : '비공개로 바꿨습니다'}`);
+      } catch (e) { toast(e.message); c.checked = !c.checked; }
+      App.render();
+    });
     const t = el.querySelector('#tab');
-    return ({ overview, lineup, timetable, poster, stage }[tab] || overview)(t, f, rest); // 포스터는 비동기 → 오류를 App 이 처리
+    return ({ overview, lineup, timetable, poster, stage, setlists }[tab] || overview)(t, f, rest); // 포스터는 비동기 → 오류를 App 이 처리
   };
+  // 기능별 공개 스위치 (탭 → 공개 항목)
+  const PUBS = [['info', '정보'], ['lineup', '라인업'], ['timetable', '시간표'], ['poster', '포스터'], ['stage', '무대 배치'], ['setlists', '셋리스트']];
+  const PUB_OF = { overview: 'info', lineup: 'lineup', timetable: 'timetable', poster: 'poster', stage: 'stage', setlists: 'setlists' };
+
+  /* ---------- Setlists: 출연 밴드의 세트리스트를 골라 공개용으로 저장 ---------- */
+  function snapshot(bandId, slId) {
+    const sl = db().setlists.find((x) => x.id === slId && x.bandId === bandId);
+    if (!sl) return null;
+    const items = sl.items.map((i) => Store.song(i.songId)).filter(Boolean).map((s) => ({ title: s.title, artist: s.artist, duration: s.duration }));
+    return { bandId, setlistId: slId, name: sl.name, items, total: V.setlistTotal(sl) };
+  }
+  function setlists(el, f) {
+    const bands = db().bands;
+    const S = f.setlists || {};
+    const acts = [...f.acts].sort((a, b) => (b.headliner - a.headliner) || a.name.localeCompare(b.name));
+    el.innerHTML = `
+      <p class="muted" style="font-size:13px;margin-bottom:16px">출연진마다 밴드의 세트리스트를 고르면 그 순간의 곡 목록이 저장됩니다. 밴드가 세트리스트를 고친 뒤에는 <b>최신으로</b>를 누르세요. 위의 <b>셋리스트</b> 스위치를 켜면 회원 Home에 공개됩니다.</p>
+      <div class="row" style="margin-bottom:12px"><button class="btn sm" id="syncAll" ${Object.keys(S).length ? '' : 'disabled'}>모두 최신으로</button></div>
+      ${acts.map((a) => {
+        const cur = S[a.id] || {};
+        const bid = cur.bandId || (bands.some((b) => b.id === a.bandId) ? a.bandId : '');
+        const lists = db().setlists.filter((x) => x.bandId === bid);
+        return `<div class="sl-row" data-a="${a.id}">
+          <b class="sl-name">${a.headliner ? '★ ' : ''}${esc(a.name)}</b>
+          <select class="input" data-band><option value="">밴드 선택</option>${bands.map((b) => `<option value="${b.id}" ${b.id === bid ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>
+          <select class="input" data-sl ${bid ? '' : 'disabled'}><option value="">세트리스트 선택</option>${lists.map((l) => `<option value="${l.id}" ${l.id === cur.setlistId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+          <span class="muted num" style="font-size:12px;white-space:nowrap">${cur.items ? `${cur.items.length}곡 · ${UI.dur(cur.total)}` : '—'}</span>
+          ${cur.items ? '<button class="btn icon sm ghost" data-clr title="지우기">✕</button>' : ''}
+        </div>`;
+      }).join('') || UI.empty('Setlists', '먼저 Lineup에 출연진을 추가하세요.')}`;
+    const saveS = (next) => { const cf = liveF(f); if (!cf) return gone(); cf.setlists = next; Store.save(); App.render(); };
+    el.querySelectorAll('[data-a]').forEach((row) => {
+      const aid = row.dataset.a;
+      row.querySelector('[data-band]').onchange = (e) => { const next = { ...(f.setlists || {}) }; if (e.target.value) next[aid] = { bandId: e.target.value }; else delete next[aid]; saveS(next); };
+      row.querySelector('[data-sl]').onchange = (e) => {
+        const next = { ...(f.setlists || {}) };
+        const bid = row.querySelector('[data-band]').value;
+        const snap = e.target.value ? snapshot(bid, e.target.value) : null;
+        if (snap) next[aid] = snap; else next[aid] = { bandId: bid };
+        saveS(next);
+      };
+      const clr = row.querySelector('[data-clr]');
+      if (clr) clr.onclick = () => { const next = { ...(f.setlists || {}) }; delete next[aid]; saveS(next); };
+    });
+    const sa = el.querySelector('#syncAll');
+    if (sa) sa.onclick = () => {
+      const next = {};
+      Object.entries(f.setlists || {}).forEach(([aid, v]) => { next[aid] = (v.setlistId && snapshot(v.bandId, v.setlistId)) || v; });
+      saveS(next); toast('세트리스트를 최신으로 맞췄습니다');
+    };
+  }
 
   /* ---------- Overview: info + stages ---------- */
   function overview(el, f) {
@@ -218,7 +283,7 @@
     el.innerHTML = `
       <div class="row" style="margin-bottom:16px;justify-content:space-between">
         <p class="lbl">${f.acts.filter((a) => a.headliner).length} headliners · ${f.acts.length} acts</p>
-        <div class="row"><button class="btn" id="imp">내 밴드 불러오기</button><button class="btn solid" id="add">+ 출연진</button></div>
+        <div class="row"><button class="btn" id="imp">그룹 밴드 불러오기</button><button class="btn solid" id="add">+ 출연진</button></div>
       </div>
       ${f.acts.length ? `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:44px">head</th><th>name</th><th class="hide-sm">genre</th><th>type</th><th>slots</th><th></th></tr></thead>

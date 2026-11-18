@@ -1,107 +1,141 @@
 /* =========================================================
-   App — hash router + shell
+   App — 해시 라우터 + 계급별 메뉴
+     부원 : Home · Bands · Calendar
+     단장 : + Rooms
+     관리자: Home · Bands · Calendar · Rooms · Festival · Board
    ========================================================= */
 const App = (() => {
   const view = document.getElementById('view');
-  const routes = {
-    home: Views.home,
-    bands: Views.bands,
-    studio: Views.studio,
-    setlist: Views.setlist,
-    rehearsal: Views.rehearsal,
-    progress: Views.progress,
-    festivals: Views.festivals,
-    festival: Views.festival,
-    timetable: Views.timetable,
-    personal: Views.personal,
-    account: Views.account,
+  const V = window.Views;
+  const A = Store.Auth, G = Store.Group;
+  const ROLE = { admin: '관리자', leader: '단장', member: '부원' };
+  const NAV = {
+    member: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar']],
+    leader: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms']],
+    admin: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms'], ['festivals', 'Festival'], ['board', 'Board']],
   };
+  const BAND_TABS = [['studio', 'Studio'], ['setlist', 'Setlist'], ['rehearsal', 'Rehearsal'], ['progress', 'Progress']];
+  const ADMIN_ONLY = new Set(['festivals', 'festival', 'timetable', 'personal', 'board']);
 
   function parse() {
     const parts = (location.hash.replace(/^#\/?/, '') || 'home').split('/').filter(Boolean);
     return { name: parts[0], params: parts.slice(1) };
   }
 
-  function shell() {
-    const d = Store.db;
-    const sel = document.getElementById('activeBand');
-    sel.innerHTML = d.bands.length
-      ? d.bands.map((b) => `<option value="${b.id}" ${b.id === d.activeBandId ? 'selected' : ''}>${UI.esc(b.name)}</option>`).join('')
-      : '<option>— 밴드 없음 —</option>';
-    sel.disabled = !d.bands.length;
-
-    // ticker
-    const band = Store.band(), fest = Store.festival();
+  /* ---------- 상단 ---------- */
+  function badges() {
+    const out = { bands: 0, rooms: 0 };
+    if (!A.user) return out;
+    Store.Bands.list.forEach((b) => { if (b.canEdit) out.bands += Store.Bands.members(b.id).filter((m) => m.status === 'pending').length; });
+    if (G.isAdmin) out.rooms = Store.Rooms.reservations.filter((r) => r.status === 'pending').length;
+    return out;
+  }
+  function shell(key) {
+    const nav = document.getElementById('nav');
+    const logged = !!(A.user && !A.needsOnboarding && G.current);
+    const items = logged ? NAV[G.role] : [];
+    const bd = badges();
+    nav.innerHTML = items.map(([k, v]) => `<a href="#/${k}" data-r="${k}" class="${k === key ? 'on' : ''}">${v}${bd[k] ? `<i class="nbadge">${bd[k]}</i>` : ''}</a>`).join('');
+    UI.centerActive(nav, nav.querySelector('a.on'));
+    // 그룹 선택 (2개 이상일 때)
+    const gs = document.getElementById('groupSwitch'), sel = document.getElementById('groupSel');
+    gs.hidden = !(logged && G.list.length > 1);
+    if (!gs.hidden) sel.innerHTML = G.list.map((g) => `<option value="${g.id}" ${g.id === G.id ? 'selected' : ''}>${UI.esc(g.name)}</option>`).join('');
+    // 계정 버튼
+    const btn = document.getElementById('accountBtn'), info = document.getElementById('saveInfo');
+    btn.hidden = !A.configured;
+    if (!A.user) {
+      btn.innerHTML = '<span class="lbl">guest</span><b>로그인</b>';
+      info.textContent = A.failed ? '서버에 연결하지 못했습니다' : '';
+    } else {
+      const p = A.profile || {};
+      btn.innerHTML = `<span class="lbl">${G.current ? ROLE[G.role] : 'account'}</span><b>${UI.esc(p.name || 'me')}</b>`;
+      info.textContent = G.current ? `${G.current.name} · ${ROLE[G.role]}` : '';
+    }
+    // 티커
+    const t = document.getElementById('ticker');
     const today = Store.iso(new Date());
-    const next = band && d.rehearsals.filter((r) => r.bandId === band.id && r.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
-    const items = [
-      band ? `${band.name} — ${band.members.length} members` : 'create your band',
-      next ? `next rehearsal ${UI.dateKo(next.date)} ${next.start}` : 'schedule a rehearsal',
-      'build your setlist',
-      fest ? `${fest.name} · ${UI.dateEn(fest.startDate)} · ${fest.venue}` : 'make your own festival',
-      'plan your timetable',
-    ];
-    const html = items.map((t) => `<span>${UI.esc(t)}</span>`).join('');
-    document.getElementById('ticker').innerHTML = html + html + html + html;
-    account();
+    const next = logged ? V.calItems().filter((x) => x.date >= today).slice(0, 4).map((x) => `${UI.dateKo(x.date)} ${x.title}`) : [];
+    const words = next.length ? next : ['band manager', 'setlist', 'rehearsal', 'festival', 'calendar'];
+    const html = words.map((w) => `<span>${UI.esc(w)}</span>`).join('');
+    t.innerHTML = html + html + html + html;
   }
 
-  /** 헤더 계정 버튼 + 하단 저장 위치 표시 */
-  function account() {
-    const A = Store.Auth, btn = document.getElementById('accountBtn'), info = document.getElementById('saveInfo');
-    btn.hidden = !A.configured;
-    if (!A.configured) return;
-    if (!A.user) {
-      if (A.restoring) {
-        btn.innerHTML = `<span class="lbl">${A.failed ? 'offline' : 'connecting'}</span><b>내 계정</b>`;
-        info.textContent = A.failed ? 'offline · 연결되면 계정에 저장됩니다' : 'connecting to your account…';
-        return;
-      }
-      btn.innerHTML = '<span class="lbl">guest</span><b>로그인</b>';
-      info.textContent = 'data saved in this browser';
+  /* ---------- 밴드 상세: 위쪽 밴드 바 + 탭 ---------- */
+  function bandRoute(id, tab) {
+    const meta = Store.Bands.list.find((b) => b.id === id);
+    if (!meta) { view.innerHTML = UI.empty('Band', '밴드를 찾을 수 없습니다.', '<a class="btn solid" href="#/bands">밴드 목록</a>'); return; }
+    if (!meta.canRead) {
+      view.innerHTML = V.pageHead(['band'], 'BAND', UI.esc(meta.name)) + UI.empty('Join', meta.myStatus === 'pending' ? '가입 신청을 보냈습니다. 단장이 승인하면 볼 수 있습니다.' : '밴드원만 볼 수 있습니다. Bands에서 가입을 신청하세요.', '<a class="btn solid" href="#/bands">Bands로</a>');
       return;
     }
-    const p = A.profile || {}, c = Store.Friends.cache;
-    const pending = c.requests.filter((r) => r.direction === 'in').length;
-    btn.innerHTML = `<span class="lbl">${c.friends.length ? `${c.friends.length} friend${c.friends.length > 1 ? 's' : ''}` : 'account'}</span><b>${UI.esc(p.nickname || 'me')}</b>${pending ? `<i class="badge">${pending}</i>` : ''}`;
-    info.textContent = c.friends.length ? `synced · shared with ${c.friends.length} friend${c.friends.length > 1 ? 's' : ''}` : 'synced to your account';
+    Store.setActiveBand(id);
+    const band = Store.band(id);
+    if (!band) { view.innerHTML = UI.empty('Loading', '밴드 내용을 불러오는 중입니다…'); return; }
+    const edit = Store.Bands.canEdit(id);
+    const fn = { studio: V.studio, setlist: V.setlist, rehearsal: V.rehearsal, progress: V.progress }[tab] || V.studio;
+    view.innerHTML = `
+      <div class="band-bar">
+        <a class="back" href="#/bands" aria-label="밴드 목록">‹</a>
+        ${UI.logo(band, 'sm')}
+        <b class="bb-name">${UI.esc(band.name)}</b>
+        ${edit ? `<span class="chip ink">${G.isAdmin && !Store.Bands.isLeader(id) ? '관리자' : '단장'}</span>` : '<span class="chip">보기 전용</span>'}
+        <nav class="tabs">${BAND_TABS.map(([k, v]) => `<a href="#/band/${id}/${k}" class="${k === tab ? 'on' : ''}">${v}</a>`).join('')}</nav>
+      </div>
+      <div id="bandview"></div>`;
+    const bv = view.querySelector('#bandview');
+    const r = fn(bv);
+    if (!edit) UI.readOnly(bv);
+    return r;
   }
 
+  /* ---------- 렌더 ---------- */
   function render() {
-    const { name, params } = parse();
-    const fn = routes[name] || routes.home;
-    const key = name === 'festival' ? (params[1] === 'timetable' ? 'timetable' : 'festivals') : (routes[name] ? name : 'home');
-    document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === key));
-    UI.centerActive(document.getElementById('nav'), document.querySelector('#nav a.on')); // 모바일: 선택된 메뉴가 보이게
-    shell();
-    const fail = (e) => {
-      console.error(e);
-      view.innerHTML = UI.empty('Oops', '화면을 그리는 중 오류가 발생했습니다. 데모 데이터를 초기화해 보세요.');
-    };
+    let { name, params } = parse();
+    const fail = (e) => { console.error(e); view.innerHTML = UI.empty('Oops', '화면을 그리는 중 오류가 발생했습니다. 새로고침해 보세요.'); };
+    let key = name;
     try {
-      const r = fn(view, params);
-      view.querySelectorAll('.tabs').forEach((t) => UI.centerActive(t, t.querySelector('.on'))); // 페스티벌 탭 등
-      if (r && typeof r.catch === 'function') r.catch(fail); // 비동기 화면(포스터 등)의 오류도 처리
+      if (!A.configured) { shell(''); view.innerHTML = UI.empty('Setup', 'js/config.js 에 Supabase 설정이 필요합니다.'); return; }
+      if (!A.user) { shell(''); V.landing(view); return; }
+      if (A.needsOnboarding) { shell(''); V.welcome(view); return; }
+      if (!G.current) { shell(''); view.innerHTML = UI.empty('Loading', '불러오는 중…'); return; }
+      const role = G.role;
+      // 예전 주소(현재 밴드 기준) → 밴드 상세 주소로
+      if (['studio', 'setlist', 'rehearsal', 'progress'].includes(name)) {
+        const b = Store.db.activeBandId;
+        location.replace(b ? `#/band/${b}/${name}` : '#/bands'); return;
+      }
+      if ((ADMIN_ONLY.has(name) && role !== 'admin') || (name === 'rooms' && role === 'member')) {
+        UI.toast('권한이 없는 메뉴입니다'); location.replace('#/home'); return;
+      }
+      if (name === 'band') key = 'bands';
+      if (name === 'festival' || name === 'timetable') key = 'festivals';
+      const routes = {
+        home: V.home, bands: V.bands, calendar: V.calendar, rooms: V.rooms, board: V.board, account: V.account,
+        festivals: V.festivals, festival: V.festival, timetable: V.timetable,
+      };
+      if (name !== 'band' && !routes[name]) { name = 'home'; key = 'home'; }
+      shell(key);
+      const r = name === 'band' ? bandRoute(params[0], params[1] || 'studio') : routes[name](view, params);
+      if (r && typeof r.catch === 'function') r.catch(fail);
+      view.querySelectorAll('.tabs').forEach((t) => UI.centerActive(t, t.querySelector('.on')));
     } catch (e) { fail(e); }
   }
 
   let lastRoute = '';
   window.addEventListener('hashchange', () => {
-    const r = parse().name;
+    const r = location.hash.split('/').slice(0, 3).join('/');
     render();
     if (r !== lastRoute) window.scrollTo(0, 0);
     lastRoute = r;
   });
-  document.getElementById('activeBand').addEventListener('change', (e) => { Store.setActiveBand(e.target.value); render(); });
-  document.getElementById('resetData').addEventListener('click', (e) => {
-    e.preventDefault();
-    const shared = Store.Auth.user && Store.Friends.cache.friends.length;
-    UI.confirm(shared ? '모든 데이터를 지우고 데모 데이터로 되돌릴까요?<br><b>친구들과 공유 중인 데이터도 함께 지워집니다.</b>' : '모든 데이터를 지우고 데모 데이터로 되돌릴까요?', () => { Store.reset(); location.hash = '#/home'; render(); UI.toast('데모 데이터로 초기화했습니다'); });
+  document.getElementById('groupSel').addEventListener('change', async (e) => {
+    await G.select(e.target.value); UI.toast('그룹을 바꿨습니다'); location.hash = '#/home';
   });
 
-  lastRoute = parse().name;
+  lastRoute = location.hash.split('/').slice(0, 3).join('/');
   render();
-  // 서버 데이터가 바뀌면(로그인·로그아웃·친구 변경·친구의 수정) 다시 그림. 입력 중인 창이 열려 있으면 닫힐 때까지 미룸
+  // 서버 데이터가 바뀌면 다시 그림. 입력 중인 창이 열려 있으면 닫힐 때까지 미룸
   let pendingRender = false;
   const safeRender = () => {
     if (document.querySelector('#modal-root .modal')) { pendingRender = true; return; }
@@ -110,15 +144,9 @@ const App = (() => {
   new MutationObserver(() => { if (pendingRender && !document.querySelector('#modal-root .modal')) safeRender(); })
     .observe(document.getElementById('modal-root'), { childList: true });
   Store.onRemote(safeRender);
-  Store.Auth.onChange(() => { account(); if (Store.Auth.user) Store.Friends.refresh().catch(() => {}); if (parse().name === 'account') safeRender(); });
-  Store.Friends.onChange(() => { account(); if (parse().name === 'account') safeRender(); });
+  Store.Auth.onChange(safeRender);
 
-  Store.initRemote().catch((e) => {
-    console.warn(e);
-    UI.toast(Store.Auth.restoring ? '오프라인 — 변경 내용은 다음 접속 때 계정에 저장됩니다' : '서버에 연결하지 못했습니다 — 이 브라우저에만 저장됩니다');
-    account();
-    if (parse().name === 'account') safeRender();
-  });
+  Store.initRemote().catch((e) => { console.warn(e); UI.toast('서버에 연결하지 못했습니다'); safeRender(); });
 
   return { render };
 })();

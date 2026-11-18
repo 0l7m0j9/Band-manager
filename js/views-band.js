@@ -22,21 +22,21 @@ window.Views = window.Views || {};
 
   const needBand = (el) => {
     const band = Store.band();
-    if (!band) {
-      el.innerHTML = pageHead(['no band'], 'START', 'Create a band') +
-        UI.empty('Hello', '먼저 밴드를 만들어주세요.', `<button class="btn solid" id="nb">+ 새 밴드 만들기</button>`);
-      el.querySelector('#nb').onclick = () => bandForm();
-    }
+    if (!band) el.innerHTML = UI.empty('Band', '밴드를 찾을 수 없거나 볼 권한이 없습니다.', '<a class="btn solid" href="#/bands">밴드 목록으로</a>');
     return band;
   };
+  /** 이 밴드를 고칠 수 있는지 (단장·관리자) */
+  const canEdit = (band) => !!band && Store.Bands.canEdit(band.id);
+  V.canEditBand = canEdit;
 
-  /* ---------------- Band form ---------------- */
+  /* ---------------- Band form (만들기 / 정보 수정) ---------------- */
   function bandForm(band) {
-    const b = band || { name: '', genre: '', bio: '', color: '#7f5cff', logo: '' };
+    const b = band || { name: '', genre: '', bio: '', color: '#111111', logo: '' };
     let logoData = b.logo;
     modal({
       title: band ? '밴드 정보 수정' : '새 밴드 만들기',
       body: `
+        ${band ? '' : '<p class="muted" style="font-size:13px;margin-bottom:14px">밴드를 만들면 단장이 되어 곡·세트리스트·합주를 관리하고 가입 신청을 승인할 수 있습니다.</p>'}
         <div class="row" style="align-items:flex-start;gap:18px">
           <label style="cursor:pointer;text-align:center">
             <span id="lp">${logo({ ...b, name: b.name || 'NEW' }, 'lg')}</span>
@@ -46,126 +46,99 @@ window.Views = window.Views || {};
           <div style="flex:1;min-width:200px">
             <div class="field"><span class="lbl">band name *</span><input name="name" required value="${esc(b.name)}" maxlength="40"></div>
             <div class="row">
-              <div class="field"><span class="lbl">genre</span><input name="genre" value="${esc(b.genre)}" placeholder="Indie Rock"></div>
+              <div class="field"><span class="lbl">genre</span><input name="genre" value="${esc(b.genre)}" placeholder="Indie Rock" maxlength="40"></div>
               <div class="field" style="flex:0 0 auto"><span class="lbl">color</span><input type="color" name="color" value="${esc(b.color)}"></div>
             </div>
           </div>
         </div>
         <div class="field"><span class="lbl">introduction</span><textarea name="bio" maxlength="400">${esc(b.bio)}</textarea></div>
         ${logoData ? '<button type="button" class="btn sm" id="rmLogo">로고 이미지 제거</button>' : ''}`,
+      submit: band ? '저장' : '만들기',
       onOpen(f) {
         const refresh = () => { f.querySelector('#lp').innerHTML = logo({ name: f.name.value || 'NEW', color: f.color.value, logo: logoData }, 'lg'); };
         f.logoFile.onchange = async () => { if (f.logoFile.files[0]) { logoData = await UI.readImage(f.logoFile.files[0], 320); refresh(); } };
         f.name.oninput = f.color.oninput = refresh;
         const rm = f.querySelector('#rmLogo'); if (rm) rm.onclick = () => { logoData = ''; refresh(); rm.remove(); };
       },
-      onSubmit(d) {
+      async onSubmit(d, f) {
         if (!d.name.trim()) { toast('밴드 이름을 입력하세요'); return false; }
         const patch = { name: d.name.trim(), genre: d.genre.trim(), bio: d.bio.trim(), color: d.color, logo: logoData };
-        if (band) { const cur = live('bands', band); if (!cur) return gone(); Object.assign(cur, patch); }
-        else {
-          const nb = { id: Store.uid(), ...patch, founded: Store.iso(new Date()), members: [], log: [{ id: Store.uid(), date: Store.iso(new Date()), text: '밴드 결성' }] };
-          db().bands.push(nb); db().activeBandId = nb.id;
+        if (band) {
+          const cur = live('bands', band); if (!cur) return gone();
+          Object.assign(cur, patch); Store.save(); toast('저장했습니다'); App.render();
+          return;
         }
-        Store.save();
-        toast(band ? '저장했습니다' : `${patch.name} 결성!`);
-        if (!band) go('#/studio'); else App.render();
+        const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
+        try {
+          const id = await Store.Bands.create(patch);
+          toast(`${patch.name} 결성! 단장이 되었습니다`);
+          go(`#/band/${id}`);
+        } catch (e) { toast(e.message); btn.disabled = false; return false; }
       },
     });
   }
   V.bandForm = bandForm;
 
-  /* ================= HOME ================= */
-  V.home = (el) => {
-    const d = db(), band = Store.band(), fest = Store.festival();
-    const today = Store.iso(new Date());
-    const nextReh = d.rehearsals.filter((r) => band && r.bandId === band.id && r.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
-    const sl = band && d.setlists.find((s) => s.bandId === band.id);
-    const songs = band ? Store.songsOf(band.id) : [];
-    const avg = songs.length ? Math.round(songs.reduce((a, s) => a + s.progress, 0) / songs.length) : 0;
-    const modules = [
-      ['01', 'Band Studio', '#/studio', '밴드 · 로고 · 멤버 · 포지션 · 활동 기록'],
-      ['02', 'Setlist Maker', '#/setlist', '드래그로 순서 편집, 공연 시간 자동 계산, BPM 흐름'],
-      ['03', 'Rehearsal', '#/rehearsal', '합주 일정 · 장소 · 참석 체크 · 공연 이력'],
-      ['04', 'Progress', '#/progress', '곡별 연습 진행도와 멤버별 과제'],
-      ['05', 'Festival Maker', '#/festivals', '페스티벌 · 무대 · 라인업 · 포스터'],
-      ['06', 'Timetable', '#/timetable', '무대별 타임테이블, 충돌 검사, 장비 교체 시간'],
-      ['07', 'Personal Festival', '#/personal', '즐겨찾기로 만드는 나만의 관람 시간표'],
-    ];
-    el.innerHTML = `
-      <section class="hero">
-        <div class="hero-meta">
-          <div>${band ? esc(band.name) : 'No band yet'}<br><span class="muted">${band ? esc(band.genre || '') : ''}</span></div>
-          <div class="right">${fest ? `${esc(fest.name)} · ${dateEn(fest.startDate)}` : 'Plan your own festival'}<br><span class="muted">${fest ? esc(fest.venue) : ''}</span></div>
-        </div>
-        <div class="hero-title">
-          <span class="tech">THE BAND</span>
-          <span class="wave">Manager</span>
-        </div>
-        <p class="hero-sub">밴드를 만들고, 세트리스트를 짜고, 나만의 페스티벌까지.<br>공연을 기획하는 모든 과정을 한 곳에서.</p>
-      </section>
-      <div class="stats">
-        <div class="stat"><span class="lbl">my bands</span><b class="num">${d.bands.length}</b></div>
-        <div class="stat"><span class="lbl">songs in library</span><b class="num">${songs.length}</b></div>
-        <div class="stat"><span class="lbl">avg. progress</span><b class="num">${avg}%</b></div>
-        <div class="stat"><span class="lbl">festivals</span><b class="num">${d.festivals.length}</b></div>
-      </div>
-      <div class="grid-3" style="margin:28px 0 40px">
-        <a class="panel paper" href="#/rehearsal" style="text-decoration:none">
-          <span class="lbl muted">next rehearsal</span>
-          ${nextReh ? `<h3 style="font-size:30px;margin:8px 0 4px">${dateKo(nextReh.date)}</h3><p>${esc(nextReh.start)}–${esc(nextReh.end)} · ${esc(nextReh.place)}</p>` : '<h3 style="font-size:24px;margin-top:8px">예정된 합주 없음</h3>'}
-        </a>
-        <a class="panel ink" href="#/setlist" style="text-decoration:none">
-          <span class="lbl" style="color:var(--lime)">latest setlist</span>
-          ${sl ? `<h3 style="font-size:30px;margin:8px 0 4px">${esc(sl.name)}</h3><p>${sl.items.length}곡 · ${dur(V.setlistTotal(sl))}</p>` : '<h3 style="font-size:24px;margin-top:8px">세트리스트를 만들어보세요</h3>'}
-        </a>
-        <a class="panel" href="#/timetable" style="text-decoration:none">
-          <span class="lbl muted">festival</span>
-          ${fest ? `<h3 style="font-size:30px;margin:8px 0 4px">${esc(fest.name)}</h3><p>${fest.stages.length} stages · ${fest.acts.length} acts</p>` : '<h3 style="font-size:24px;margin-top:8px">페스티벌 만들기</h3>'}
-        </a>
-      </div>
-      <ul class="module-list">
-        ${modules.map(([n, name, href, desc]) => `<li><a href="${href}"><span class="no">${n}</span><span class="name">${name}</span><span class="desc">${desc}</span></a></li>`).join('')}
-      </ul>`;
-  };
-
-  /* ================= MY BANDS ================= */
+  /* ================= BANDS (목록) =================
+     위: 내가 속한 밴드(관리자는 전부) / 아래: 그룹의 모든 밴드 → 가입 신청 */
   V.bands = (el) => {
-    const d = db();
-    el.innerHTML = pageHead(['my bands', `${d.bands.length} total`], 'MY', 'Bands', `<button class="btn solid" id="add">+ 새 밴드</button>`) + `
+    const G = Store.Group, list = Store.Bands.list, admin = G.isAdmin;
+    const mine = list.filter((b) => admin || b.myStatus === 'approved');
+    const pendingFor = (b) => (b.canEdit ? Store.Bands.members(b.id).filter((m) => m.status === 'pending').length : 0);
+    const roleChip = (b) => (b.myRole === 'leader' && b.myStatus === 'approved' ? '<span class="chip ink">단장</span>'
+      : b.myStatus === 'approved' ? '<span class="chip">부원</span>' : admin ? '<span class="chip lime">관리자</span>' : '');
+    const card = (b) => `<a class="band-card" href="#/band/${b.id}">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">${logo(b)}
+          <span class="row" style="gap:6px">${roleChip(b)}${pendingFor(b) ? `<span class="chip violet">신청 ${pendingFor(b)}</span>` : ''}</span>
+        </div>
+        <h3>${esc(b.name)}</h3>
+        <div class="row"><span class="chip">${esc(b.genre || 'Band')}</span><span class="lbl muted">${b.memberCount} members</span></div>
+      </a>`;
+    const action = (b) => {
+      if (b.myStatus === 'approved') return '<span class="chip">참여 중</span>';
+      if (b.myStatus === 'pending') return `<span class="chip lime">승인 대기</span><button class="btn sm ghost" data-cancel="${b.id}">취소</button>`;
+      return `<button class="btn sm" data-join="${b.id}">가입 신청</button>`;
+    };
+    el.innerHTML = pageHead([esc((G.current || {}).name || ''), `${list.length} bands`], 'BANDS', admin ? 'All Bands' : 'My Bands',
+      `<button class="btn" id="imp">예전 데이터 가져오기</button><button class="btn solid" id="add">+ 새 밴드</button>`) + `
       <div class="band-grid">
-        ${d.bands.map((b) => {
-          const n = Store.songsOf(b.id).length;
-          return `<a class="band-card ${b.id === d.activeBandId ? 'active' : ''}" data-id="${b.id}">
-            <div class="row" style="justify-content:space-between;align-items:flex-start">${logo(b)}
-              <span class="row" style="gap:6px">${b.id === d.activeBandId ? '<span class="chip lime" style="color:var(--ink)">ACTIVE</span>' : ''}<button type="button" class="btn icon sm card-del" data-del="${b.id}" title="밴드 삭제" aria-label="${esc(b.name)} 삭제">✕</button></span>
-            </div>
-            <h3>${esc(b.name)}</h3>
-            <div class="row"><span class="chip">${esc(b.genre || 'Genre')}</span><span class="lbl">${b.members.length} members · ${n} songs</span></div>
-          </a>`;
-        }).join('')}
-        <a class="band-card add" id="add2">+ New Band</a>
-      </div>`;
-    el.querySelector('#add').onclick = el.querySelector('#add2').onclick = () => bandForm();
-    el.querySelectorAll('.band-card[data-id]').forEach((c) => c.onclick = () => { Store.setActiveBand(c.dataset.id); go('#/studio'); });
-    el.querySelectorAll('[data-del]').forEach((b) => b.onclick = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      deleteBand(d.bands.find((x) => x.id === b.dataset.del), () => App.render());
+        ${mine.map(card).join('')}
+        <a class="band-card add" id="add2">+ New Band<span class="lbl muted" style="margin-top:8px">만든 사람이 단장이 됩니다</span></a>
+      </div>
+      <section class="section" style="margin-top:44px">
+        <div class="section-head"><h3>${esc((G.current || {}).name || '')} 밴드</h3><span class="count">가입 신청 → 단장 승인 후 참여</span></div>
+        ${list.map((b) => `
+          <div class="explore-row">
+            ${logo(b, 'sm')}
+            <span class="ex-t"><b>${esc(b.name)}</b><small>${esc(b.genre || '—')} · 단장 ${esc(b.leaders.join(', ') || '—')} · ${b.memberCount}명</small></span>
+            <span class="row" style="gap:6px;flex:0 0 auto">${action(b)}${admin ? `<button class="btn sm ghost" data-del="${b.id}">삭제</button>` : ''}</span>
+          </div>`).join('') || '<p class="muted" style="padding:12px 0">아직 밴드가 없습니다. 첫 밴드를 만들어 보세요.</p>'}
+      </section>`;
+    el.querySelector('#add').onclick = el.querySelector('#add2').onclick = (e) => { e.preventDefault(); bandForm(); };
+    el.querySelector('#imp').onclick = () => V.legacyImport && V.legacyImport();
+    const busy = async (btn, fn, msg) => { btn.disabled = true; try { await fn(); if (msg) toast(msg); } catch (e) { toast(e.message); btn.disabled = false; } };
+    el.querySelectorAll('[data-join]').forEach((b) => b.onclick = () => {
+      const band = list.find((x) => x.id === b.dataset.join);
+      const mine = (Store.Auth.profile || {}).instruments || [];
+      modal({
+        title: `${band.name} 가입 신청`,
+        body: `<p class="muted" style="font-size:13px;margin-bottom:12px">단장이 승인하면 밴드의 곡·세트리스트·합주 일정을 볼 수 있습니다.</p>
+          <div class="field"><span class="lbl">이 밴드에서 맡을 파트</span><input name="part" list="myInst" maxlength="30" value="${esc(mine[0] || '')}" placeholder="예: Bass"><datalist id="myInst">${[...new Set([...mine, ...INSTRUMENTS])].map((i) => `<option value="${esc(i)}">`).join('')}</datalist></div>`,
+        submit: '신청',
+        async onSubmit(d) {
+          try { await Store.Bands.requestJoin(band.id, d.part.trim()); toast('가입을 신청했습니다 · 단장 승인을 기다려 주세요'); } catch (e) { toast(e.message); return false; }
+        },
+      });
     });
+    el.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = () => busy(b, () => Store.Bands.cancelRequest(b.dataset.cancel), '신청을 취소했습니다'));
+    el.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => deleteBand(list.find((x) => x.id === b.dataset.del)));
   };
 
-  /* ---------------- Band delete ---------------- */
+  /* ---------------- Band delete (관리자) ---------------- */
   function deleteBand(band, after) {
     if (!band) return;
-    const n = Store.songsOf(band.id).length;
-    confirm(`<b>${esc(band.name)}</b> 밴드를 삭제할까요?<br><span class="muted">곡 ${n}개와 세트리스트·합주 일정·과제·공연 기록이 함께 삭제됩니다.</span>`, () => {
-      const d = db();
-      d.bands = d.bands.filter((b) => b.id !== band.id);
-      ['songs', 'setlists', 'rehearsals', 'tasks', 'gigs'].forEach((c) => d[c] = d[c].filter((x) => x.bandId !== band.id));
-      if (d.activeBandId === band.id) d.activeBandId = d.bands[0] ? d.bands[0].id : null;
-      Store.save();
-      toast(`${band.name} 삭제됨`);
-      after && after();
+    confirm(`<b>${esc(band.name)}</b> 밴드를 삭제할까요?<br><span class="muted">곡·세트리스트·합주·과제·공연 기록·연습실 예약과 밴드원 명단이 모두 삭제되며 되돌릴 수 없습니다.</span>`, async () => {
+      try { await Store.Bands.remove(band.id); toast(`${band.name} 삭제됨`); after ? after() : App.render(); } catch (e) { toast(e.message); }
     });
   }
 
@@ -316,8 +289,14 @@ window.Views = window.Views || {};
   /* ================= BAND STUDIO ================= */
   V.studio = (el) => {
     const band = needBand(el); if (!band) return;
+    const edit = canEdit(band), admin = Store.Group.isAdmin;
+    const me = Store.Auth.user ? Store.Auth.user.id : null;
     const songs = Store.songsOf(band.id);
     const gigs = db().gigs.filter((g) => g.bandId === band.id);
+    const roster = Store.Bands.members(band.id);
+    const approved = roster.filter((m) => m.status === 'approved').sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name) : a.role === 'leader' ? -1 : 1));
+    const pend = roster.filter((m) => m.status === 'pending');
+    const amMember = approved.some((m) => m.user_id === me);
     const marqueeItem = `<span class="item">${esc(band.name)}<sup>${esc((band.genre || '').toUpperCase())}</sup>${logo(band)}</span>`;
     el.innerHTML = `
       <div class="name-marquee" aria-label="${esc(band.name)}">
@@ -326,15 +305,16 @@ window.Views = window.Views || {};
       <div class="page-head" style="padding-top:20px">
         <div>
           <div class="eyebrow"><span class="lbl">band studio</span><span class="lbl">since ${esc(band.founded || '')}</span></div>
-          <p style="font-size:20px;font-weight:600;max-width:640px">${esc(band.bio || '소개를 입력해 주세요.')}</p>
+          <p style="font-size:20px;font-weight:600;max-width:640px">${esc(band.bio || (edit ? '소개를 입력해 주세요.' : ''))}</p>
         </div>
         <div class="page-actions">
-          <button class="btn" id="edit">밴드 정보 수정</button>
-          <button class="btn ghost" id="del">밴드 삭제</button>
+          ${edit ? '<button class="btn" id="edit">밴드 정보 수정</button>' : ''}
+          ${admin ? '<button class="btn ghost" id="del">밴드 삭제</button>' : ''}
+          ${amMember ? '<button class="btn ghost" id="leave" data-ro>밴드 탈퇴</button>' : ''}
         </div>
       </div>
       <div class="stats" style="border-top:1px solid var(--line);margin-bottom:32px">
-        <div class="stat"><span class="lbl">members</span><b class="num">${band.members.length}</b></div>
+        <div class="stat"><span class="lbl">members</span><b class="num">${approved.length}</b></div>
         <div class="stat"><span class="lbl">songs</span><b class="num">${songs.length}</b></div>
         <div class="stat"><span class="lbl">rehearsals</span><b class="num">${db().rehearsals.filter((r) => r.bandId === band.id).length}</b></div>
         <div class="stat"><span class="lbl">shows</span><b class="num">${gigs.length}</b></div>
@@ -343,63 +323,75 @@ window.Views = window.Views || {};
       ${candidateSection(band)}
       <div class="split">
         <section class="section">
-          <div class="section-head"><h3>Members</h3><button class="btn sm solid" id="addM">+ 멤버</button></div>
-          <div class="row lbl member-head" style="display:grid;grid-template-columns:36px 1.4fr 1fr 1fr 32px;gap:10px;opacity:.7"><span></span><span>name</span><span>instrument</span><span>position</span><span></span></div>
-          ${band.members.map((m) => `
-            <div class="member" data-id="${m.id}">
+          <div class="section-head"><h3>Members</h3><span class="count">${approved.length}</span></div>
+          ${edit && pend.length ? `<div class="req-box">
+            <div class="lbl" style="margin-bottom:6px">가입 신청 ${pend.length}</div>
+            ${pend.map((m) => `<div class="friend-row">
               <span class="avatar">${esc(UI.initials(m.name))}</span>
-              <input class="inline-input" data-f="name" value="${esc(m.name)}" aria-label="이름">
-              <select class="inline-input" data-f="instrument" aria-label="악기">${INSTRUMENTS.map((i) => `<option ${i === m.instrument ? 'selected' : ''}>${i}</option>`).join('')}</select>
-              <input class="inline-input" data-f="position" value="${esc(m.position)}" placeholder="리더 / 총무…" aria-label="포지션">
-              <button class="btn icon ghost" data-rm title="삭제">✕</button>
-            </div>`).join('') || '<p class="muted" style="padding:16px 0">아직 멤버가 없습니다.</p>'}
+              <span class="friend-name"><b>${esc(m.name)}</b><span class="muted" style="font-size:12px">${esc(m.part || m.instruments.join(', ') || '—')}</span></span>
+              <span class="row" style="gap:6px;flex:0 0 auto"><button class="btn sm solid" data-acc="${m.user_id}">승인</button><button class="btn sm ghost" data-dec="${m.user_id}">거절</button></span>
+            </div>`).join('')}
+          </div>` : ''}
+          ${approved.map((m) => `
+            <div class="friend-row">
+              <span class="avatar">${esc(UI.initials(m.name))}</span>
+              <span class="friend-name"><b>${esc(m.name)} ${m.role === 'leader' ? '<span class="chip ink" style="margin-left:4px">단장</span>' : ''}</b><span class="muted" style="font-size:12px">${esc(m.part || m.instruments.join(', ') || '—')}${m.position ? ' · ' + esc(m.position) : ''}</span></span>
+              ${edit ? `<button class="btn sm ghost" data-me="${m.user_id}">편집</button>` : ''}
+            </div>`).join('') || '<p class="muted" style="padding:16px 0">아직 밴드원이 없습니다.</p>'}
+          ${edit ? '<p class="muted" style="font-size:12px;margin-top:10px">밴드원은 Bands 화면에서 가입 신청 → 여기서 승인하면 추가됩니다.</p>' : ''}
         </section>
         <section class="section">
           <div class="section-head"><h3>Activity Log</h3><span class="count">${band.log.length}</span></div>
-          <form class="row" id="logForm" style="margin-bottom:8px">
+          ${edit ? `<form class="row" id="logForm" style="margin-bottom:8px">
             <input type="date" class="input" name="date" value="${Store.iso(new Date())}" style="flex:0 0 150px">
             <input class="input" name="text" placeholder="활동 내용 기록 (예: 신곡 데모 녹음)" style="flex:1 1 200px" required>
             <button class="btn sm solid">기록</button>
-          </form>
+          </form>` : ''}
           ${[...band.log].sort((a, b) => b.date.localeCompare(a.date)).map((l) => `
-            <div class="log-item"><span class="mono" style="font-size:12px">${esc(l.date)}</span><span>${esc(l.text)}</span><button class="btn icon ghost" data-log="${l.id}">✕</button></div>`).join('')}
+            <div class="log-item"><span class="mono" style="font-size:12px">${esc(l.date)}</span><span>${esc(l.text)}</span>${edit ? `<button class="btn icon ghost" data-log="${l.id}">✕</button>` : '<span></span>'}</div>`).join('') || '<p class="muted">기록이 없습니다.</p>'}
         </section>
       </div>`;
 
-    el.querySelector('#edit').onclick = () => bandForm(band);
-    el.querySelector('#del').onclick = () => deleteBand(band, () => go('#/bands'));
+    const on = (sel, fn) => { const x = el.querySelector(sel); if (x) x.onclick = fn; };
+    on('#edit', () => bandForm(band));
+    on('#del', () => deleteBand(band, () => go('#/bands')));
+    on('#leave', () => confirm(`<b>${esc(band.name)}</b>에서 탈퇴할까요?`, async () => {
+      try { await Store.Bands.removeMember(band.id, me); toast('탈퇴했습니다'); go('#/bands'); } catch (e) { toast(e.message); }
+    }));
     bindSongAccordion(el, band);
     bindCandidates(el, band);
-    el.querySelector('#addM').onclick = () => modal({
-      title: '멤버 추가',
-      body: `<div class="field"><span class="lbl">name *</span><input name="name" required></div>
-        <div class="row"><div class="field"><span class="lbl">instrument</span><select name="instrument">${INSTRUMENTS.map((i) => `<option>${i}</option>`).join('')}</select></div>
-        <div class="field"><span class="lbl">position</span><input name="position" placeholder="리더, 총무, 편곡…"></div></div>`,
-      submit: '추가',
-      onSubmit(dt) {
-        if (!dt.name.trim()) { toast('이름을 입력하세요'); return false; }
-        const cur = live('bands', band); if (!cur) return gone();
-        cur.members.push({ id: Store.uid(), name: dt.name.trim(), instrument: dt.instrument, position: dt.position.trim() || '멤버' });
-        Store.save(); App.render();
-      },
-    });
-    el.querySelectorAll('.member').forEach((row) => {
-      const m = band.members.find((x) => x.id === row.dataset.id);
-      row.querySelectorAll('[data-f]').forEach((inp) => inp.onchange = () => { m[inp.dataset.f] = inp.value.trim(); Store.save(); if (inp.dataset.f === 'name') App.render(); });
-      row.querySelector('[data-rm]').onclick = () => confirm(`${esc(m.name)} 님을 멤버에서 삭제할까요?`, () => {
-        const cur = live('bands', band); if (!cur) return gone();
-        cur.members = cur.members.filter((x) => x.id !== m.id);
-        db().tasks = db().tasks.filter((t) => t.memberId !== m.id);
-        Store.save(); App.render();
+    const act = async (btn, fn, msg) => { btn.disabled = true; try { await fn(); toast(msg); } catch (e) { toast(e.message); btn.disabled = false; } };
+    el.querySelectorAll('[data-acc]').forEach((b) => b.onclick = () => act(b, () => Store.Bands.respond(band.id, b.dataset.acc, true), '승인했습니다'));
+    el.querySelectorAll('[data-dec]').forEach((b) => b.onclick = () => act(b, () => Store.Bands.respond(band.id, b.dataset.dec, false), '거절했습니다'));
+    el.querySelectorAll('[data-me]').forEach((b) => b.onclick = () => {
+      const m = approved.find((x) => x.user_id === b.dataset.me);
+      modal({
+        title: `${m.name} · 밴드원 정보`,
+        body: `
+          <div class="row">
+            <div class="field"><span class="lbl">part</span><input name="part" value="${esc(m.part)}" maxlength="30" list="instList" placeholder="${esc(m.instruments.join(', '))}"><datalist id="instList">${INSTRUMENTS.map((i) => `<option value="${i}">`).join('')}</datalist></div>
+            <div class="field"><span class="lbl">position</span><input name="position" value="${esc(m.position)}" maxlength="30" placeholder="총무, 편곡…"></div>
+          </div>
+          <div class="field"><span class="lbl">role</span><select name="role"><option value="member" ${m.role === 'member' ? 'selected' : ''}>부원</option><option value="leader" ${m.role === 'leader' ? 'selected' : ''}>단장 (밴드 정보 수정·가입 승인 가능)</option></select></div>`,
+        extra: m.user_id === me ? '' : '<button type="button" class="btn ghost left" id="kick">밴드에서 내보내기</button>',
+        onOpen(f, close) {
+          const k = f.querySelector('#kick');
+          if (k) k.onclick = () => { close(); confirm(`${esc(m.name)} 님을 밴드에서 내보낼까요?`, async () => { try { await Store.Bands.removeMember(band.id, m.user_id); toast('내보냈습니다'); } catch (e) { toast(e.message); } }); };
+        },
+        async onSubmit(d) {
+          try { await Store.Bands.setMember(band.id, m.user_id, { role: d.role, part: d.part.trim(), position: d.position.trim() }); toast('저장했습니다'); } catch (e) { toast(e.message); return false; }
+        },
       });
     });
-    el.querySelector('#logForm').onsubmit = (e) => {
+    const lf = el.querySelector('#logForm');
+    if (lf) lf.onsubmit = (e) => {
       e.preventDefault();
       const f = e.target; if (!f.text.value.trim()) return;
-      band.log.push({ id: Store.uid(), date: f.date.value, text: f.text.value.trim() });
+      const cur = live('bands', band); if (!cur) return gone();
+      cur.log.push({ id: Store.uid(), date: f.date.value, text: f.text.value.trim() });
       Store.save(); App.render();
     };
-    el.querySelectorAll('[data-log]').forEach((b) => b.onclick = () => { band.log = band.log.filter((l) => l.id !== b.dataset.log); Store.save(); App.render(); });
+    el.querySelectorAll('[data-log]').forEach((b) => b.onclick = () => { const cur = live('bands', band); if (!cur) return; cur.log = cur.log.filter((l) => l.id !== b.dataset.log); Store.save(); App.render(); });
   };
 
   /* ================= SETLIST ================= */
@@ -569,7 +561,7 @@ window.Views = window.Views || {};
       setHTML = `
         <div class="row" style="margin-bottom:14px">
           <div class="field" style="flex:2 1 180px;margin:0"><span class="lbl">setlist</span>
-            <select class="input" id="slPick">${lists.map((l) => `<option value="${l.id}" ${l.id === sl.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+            <select class="input" id="slPick" data-ro>${lists.map((l) => `<option value="${l.id}" ${l.id === sl.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
           <div class="field" style="flex:1 1 90px;margin:0"><span class="lbl">limit (min)</span><input class="input" type="number" min="0" id="slLimit" value="${sl.limit}"></div>
           <div class="field" style="flex:1 1 90px;margin:0"><span class="lbl">transition (sec)</span><input class="input" type="number" min="0" step="5" id="slTrans" value="${sl.transition}"></div>
         </div>
@@ -892,10 +884,13 @@ window.Views = window.Views || {};
           </div>`).join('') || '<p class="muted">아직 공연 기록이 없습니다.</p>'}</div>
       </section>`;
 
-    el.querySelector('#addReh').onclick = () => rehearsalForm(band);
-    el.querySelector('#addGig').onclick = () => gigForm(band);
-    el.querySelectorAll('[data-reh]').forEach((c) => c.onclick = () => rehearsalForm(band, rehs.find((r) => r.id === c.dataset.reh)));
-    el.querySelectorAll('[data-gig]').forEach((c) => c.onclick = () => gigForm(band, gigs.find((g) => g.id === c.dataset.gig)));
+    const edit = canEdit(band); // 부원은 보기만
+    if (edit) {
+      el.querySelector('#addReh').onclick = () => rehearsalForm(band);
+      el.querySelector('#addGig').onclick = () => gigForm(band);
+      el.querySelectorAll('[data-reh]').forEach((c) => c.onclick = () => rehearsalForm(band, rehs.find((r) => r.id === c.dataset.reh)));
+      el.querySelectorAll('[data-gig]').forEach((c) => c.onclick = () => gigForm(band, gigs.find((g) => g.id === c.dataset.gig)));
+    } else el.querySelectorAll('[data-reh],[data-gig]').forEach((c) => { c.style.cursor = 'default'; });
 
     const calEl = el.querySelector('#cal');
     const events = [
@@ -934,7 +929,7 @@ window.Views = window.Views || {};
         slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
         eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
         events, eventDisplay: 'block', displayEventTime: true,
-        editable: true, selectable: true, selectMirror: true,
+        editable: edit, selectable: edit, selectMirror: true,
         datesSet: (info) => { calView = info.view.type; },
         select: (info) => {
           calendar.unselect();
@@ -948,6 +943,7 @@ window.Views = window.Views || {};
         eventDrop: moveEvent,
         eventResize: moveEvent,
         eventClick: (info) => {
+          if (!edit) return;
           const [type, id] = info.event.id.split(':');
           if (type === 'r') rehearsalForm(band, rehs.find((r) => r.id === id));
           else gigForm(band, gigs.find((g) => g.id === id));

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BAND MANAGER</title>
-  <meta name="description" content="밴드 운영 및 공연 기획 플랫폼">
+  <meta name="description" content="학교 밴드 운영 · 합주 · 연습실 · 공연 기획 플랫폼">
   <meta name="theme-color" content="#f6f4ef">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,21 +20,12 @@
     <a href="#/home" class="brand" aria-label="Band Manager 홈">
       <span class="brand-tech">BAND</span><span class="brand-wave">Manager</span>
     </a>
-    <nav class="nav" id="nav">
-      <a href="#/home" data-r="home">Home</a>
-      <a href="#/bands" data-r="bands">My Bands</a>
-      <a href="#/studio" data-r="studio">Studio</a>
-      <a href="#/setlist" data-r="setlist">Setlist</a>
-      <a href="#/rehearsal" data-r="rehearsal">Rehearsal</a>
-      <a href="#/progress" data-r="progress">Progress</a>
-      <a href="#/festivals" data-r="festivals">Festival</a>
-      <a href="#/timetable" data-r="timetable">Timetable</a>
-      <a href="#/personal" data-r="personal">Personal</a>
-    </nav>
+    <!-- 메뉴는 계급(관리자·단장·부원)에 따라 app.js 가 채움 -->
+    <nav class="nav" id="nav"></nav>
     <div class="top-right">
-      <label class="band-switch">
-        <span class="lbl">active band</span>
-        <select id="activeBand"></select>
+      <label class="band-switch" id="groupSwitch" hidden>
+        <span class="lbl">group</span>
+        <select id="groupSel"></select>
       </label>
       <a href="#/account" class="account-btn" id="accountBtn" hidden></a>
     </div>
@@ -44,7 +35,7 @@
 
   <footer class="foot">
     <span class="lbl">a project by</span> <b class="tech">BAND MANAGER</b>
-    <span class="lbl right"><span id="saveInfo">data saved in this browser</span> · <a href="#" id="resetData">reset demo</a></span>
+    <span class="lbl right"><span id="saveInfo"></span></span>
   </footer>
 
   <div id="modal-root"></div>
@@ -57,6 +48,10 @@
   <script src="js/poster.js"></script>
   <script src="js/views-band.js"></script>
   <script src="js/views-festival.js"></script>
+  <script src="js/views-calendar.js"></script>
+  <script src="js/views-home.js"></script>
+  <script src="js/views-rooms.js"></script>
+  <script src="js/views-board.js"></script>
   <script src="js/views-account.js"></script>
   <script src="js/app.js"></script>
 </body>
