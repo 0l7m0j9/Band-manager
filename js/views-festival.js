@@ -221,13 +221,13 @@
         <div class="row"><button class="btn" id="imp">내 밴드 불러오기</button><button class="btn solid" id="add">+ 출연진</button></div>
       </div>
       ${f.acts.length ? `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th style="width:44px">head</th><th>name</th><th>genre</th><th>type</th><th>slots</th><th></th></tr></thead>
+        <thead><tr><th style="width:44px">head</th><th>name</th><th class="hide-sm">genre</th><th>type</th><th>slots</th><th></th></tr></thead>
         <tbody>${sorted.map((a) => {
           const sl = f.slots.filter((s) => s.actId === a.id);
           return `<tr data-a="${a.id}">
             <td><button class="star ${a.headliner ? 'on' : ''}" data-h title="헤드라이너 지정">★</button></td>
             <td><b style="font-size:${a.headliner ? 22 : 16}px">${esc(a.name)}</b></td>
-            <td>${esc(a.genre)}</td>
+            <td class="hide-sm">${esc(a.genre)}</td>
             <td><span class="chip ${a.origin === 'mine' ? 'lime' : a.origin === 'real' ? 'ink' : ''}">${ORIGIN[a.origin]}</span></td>
             <td class="mono" style="font-size:12px">${sl.map((s) => `D${s.day + 1} ${hm(s.start)} ${esc(stageOf(f, s.stageId)?.name || '')}`).join('<br>') || '<span class="muted">미배치</span>'}</td>
             <td class="r" style="white-space:nowrap"><button class="btn icon sm ghost" data-e>✎</button><button class="btn icon sm ghost" data-rm>✕</button></td>
@@ -558,7 +558,7 @@
           <div class="field"><span class="lbl">show</span><select class="input" id="actSel"><option value="">기본 무대 구성</option>${actsHere.map((a) => `<option value="${a.id}" ${act && a.id === act.id ? 'selected' : ''}>${esc(a.name)}${f.layouts[`${st.id}:${a.id}`] ? ' ●' : ''}</option>`).join('')}</select></div>
           <p class="muted" style="font-size:12px;margin:-6px 0 14px">${act ? (hasOwn ? '이 공연 전용 구성입니다.' : '기본 구성을 보여주는 중 — 편집하면 이 공연 전용으로 저장됩니다.') : '● = 공연별 전용 구성이 있음'}</p>
           <div class="section-head"><h3>Gear</h3><span class="count">click to add</span></div>
-          ${Object.entries(GEAR).map(([k, v]) => `<button class="gear-btn" data-g="${k}">＋ ${v}</button>`).join('')}
+          <div class="gear-grid">${Object.entries(GEAR).map(([k, v]) => `<button class="gear-btn" data-g="${k}">＋ ${v}</button>`).join('')}</div>
           <div class="row" style="margin-top:14px">
             <button class="btn sm" id="rot" disabled>↻ 회전</button>
             <button class="btn sm" id="del" disabled>삭제</button>

@@ -72,6 +72,7 @@ const App = (() => {
     const fn = routes[name] || routes.home;
     const key = name === 'festival' ? (params[1] === 'timetable' ? 'timetable' : 'festivals') : (routes[name] ? name : 'home');
     document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === key));
+    UI.centerActive(document.getElementById('nav'), document.querySelector('#nav a.on')); // 모바일: 선택된 메뉴가 보이게
     shell();
     const fail = (e) => {
       console.error(e);
@@ -79,6 +80,7 @@ const App = (() => {
     };
     try {
       const r = fn(view, params);
+      view.querySelectorAll('.tabs').forEach((t) => UI.centerActive(t, t.querySelector('.on'))); // 페스티벌 탭 등
       if (r && typeof r.catch === 'function') r.catch(fail); // 비동기 화면(포스터 등)의 오류도 처리
     } catch (e) { fail(e); }
   }

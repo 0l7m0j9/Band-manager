@@ -77,7 +77,9 @@ const UI = (() => {
       if (onSubmit && (await onSubmit(data, form)) !== false) close();
     });
     onOpen && onOpen(form, close);
-    const first = form.querySelector('input:not([type=hidden]):not([type=file]), select, textarea');
+    // 터치 기기에서는 창이 열리자마자 키보드가 올라오지 않도록 자동 포커스를 하지 않음
+    const touch = window.matchMedia && window.matchMedia('(hover: none)').matches;
+    const first = !touch && form.querySelector('input:not([type=hidden]):not([type=file]), select, textarea');
     first && setTimeout(() => first.focus(), 30);
     return { form, close };
   }
@@ -118,7 +120,14 @@ const UI = (() => {
     toast('이미지를 다운로드했습니다');
   }
 
+  /** 가로로 스크롤되는 메뉴/탭에서 선택된 항목이 보이도록 가운데로 (페이지 세로 스크롤은 건드리지 않음) */
+  function centerActive(scroller, item) {
+    if (!scroller || !item || scroller.scrollWidth <= scroller.clientWidth) return;
+    const s = scroller.getBoundingClientRect(), r = item.getBoundingClientRect();
+    scroller.scrollLeft += (r.left + r.width / 2) - (s.left + s.width / 2);
+  }
+
   const empty = (word, msg, action = '') => `<div class="empty"><span class="wave">${word}</span><p>${msg}</p>${action ? `<div style="margin-top:14px">${action}</div>` : ''}</div>`;
 
-  return { esc, dur, parseDur, hm, parseHm, dateKo, dateEn, addDays, initials, MOODS, INSTRUMENTS, logo, diff, toast, modal, confirm, readImage, download, shareCanvas, empty };
+  return { esc, dur, parseDur, hm, parseHm, dateKo, dateEn, addDays, initials, MOODS, INSTRUMENTS, logo, diff, toast, modal, confirm, readImage, download, shareCanvas, empty, centerActive };
 })();

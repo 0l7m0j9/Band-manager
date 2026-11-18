@@ -344,7 +344,7 @@ window.Views = window.Views || {};
       <div class="split">
         <section class="section">
           <div class="section-head"><h3>Members</h3><button class="btn sm solid" id="addM">+ 멤버</button></div>
-          <div class="row lbl" style="display:grid;grid-template-columns:36px 1.4fr 1fr 1fr 32px;gap:10px;opacity:.7"><span></span><span>name</span><span>instrument</span><span>position</span><span></span></div>
+          <div class="row lbl member-head" style="display:grid;grid-template-columns:36px 1.4fr 1fr 1fr 32px;gap:10px;opacity:.7"><span></span><span>name</span><span>instrument</span><span>position</span><span></span></div>
           ${band.members.map((m) => `
             <div class="member" data-id="${m.id}">
               <span class="avatar">${esc(UI.initials(m.name))}</span>
@@ -586,10 +586,11 @@ window.Views = window.Views || {};
             <li class="set-item ${cutAt[i] ? 'cut' : ''}" draggable="true" data-item="${it.id}">
               <span class="grip">⋮⋮</span>
               <span class="idx">${String(i + 1).padStart(2, '0')}</span>
-              <span style="min-width:0"><span class="t">${esc(s.title)}</span><br><span class="a">${esc(s.artist)} · ${MOODS[s.mood]}</span></span>
+              <span class="st-title" style="min-width:0"><span class="t">${esc(s.title)}</span><br><span class="a">${esc(s.artist)} · ${MOODS[s.mood]}</span></span>
               <span class="mono num bpm-c" style="font-size:12px">${s.bpm} bpm</span>
-              <label class="mc"><span class="lbl">MC</span><input class="inline-input num" type="number" min="0" step="10" data-mc="${it.id}" value="${it.mc || 0}" title="곡 앞 멘트 시간(초)">s</label>
-              <span class="mono num">${dur(s.duration)}</span>
+              <label class="mc"><span class="lbl">MC</span><input class="inline-input num" type="number" min="0" step="10" inputmode="numeric" data-mc="${it.id}" value="${it.mc || 0}" title="곡 앞 멘트 시간(초)">s</label>
+              <span class="mono num st-dur">${dur(s.duration)}</span>
+              <span class="mv"><button type="button" data-up="${it.id}" aria-label="위로" ${i === 0 ? 'disabled' : ''}>▲</button><button type="button" data-dn="${it.id}" aria-label="아래로" ${i === items.length - 1 ? 'disabled' : ''}>▼</button></span>
               <button class="btn icon ghost" data-rmi="${it.id}" title="빼기">✕</button>
             </li>`).join('') : '<li class="empty-drop">왼쪽 라이브러리에서 곡을 드래그해 넣으세요</li>'}
         </ol>
@@ -640,6 +641,17 @@ window.Views = window.Views || {};
     el.querySelector('#slTrans').onchange = (e) => { sl.transition = Math.max(0, Number(e.target.value) || 0); Store.save(); App.render(); };
     el.querySelectorAll('[data-mc]').forEach((i) => i.onchange = () => { sl.items.find((x) => x.id === i.dataset.mc).mc = Math.max(0, Number(i.value) || 0); Store.save(); App.render(); });
     el.querySelectorAll('[data-rmi]').forEach((b) => b.onclick = () => { sl.items = sl.items.filter((x) => x.id !== b.dataset.rmi); Store.save(); App.render(); });
+    // 터치 기기용 순서 변경 (곡이 지워진 항목은 건너뛰고 화면에 보이는 순서 기준으로 바꿈)
+    const move = (id, dir) => {
+      const vis = sl.items.filter((x) => Store.song(x.songId));
+      const k = vis.findIndex((x) => x.id === id), other = vis[k + dir];
+      if (k < 0 || !other) return;
+      const a = sl.items.indexOf(vis[k]), b = sl.items.indexOf(other);
+      [sl.items[a], sl.items[b]] = [sl.items[b], sl.items[a]];
+      Store.save(); App.render();
+    };
+    el.querySelectorAll('[data-up]').forEach((b) => b.onclick = () => move(b.dataset.up, -1));
+    el.querySelectorAll('[data-dn]').forEach((b) => b.onclick = () => move(b.dataset.dn, 1));
     el.querySelector('#delSl').onclick = () => confirm(`「${esc(sl.name)}」 세트리스트를 삭제할까요?`, () => { Store.remove('setlists', sl.id); activeSetlistId = null; App.render(); });
     el.querySelector('#renSl').onclick = () => modal({
       title: '이름 변경', body: `<div class="field"><span class="lbl">name</span><input name="name" value="${esc(sl.name)}"></div>`,
@@ -842,7 +854,7 @@ window.Views = window.Views || {};
         <div class="stat"><span class="lbl">upcoming</span><b class="num">${upcoming.length}</b></div>
         <div class="stat"><span class="lbl">shows played</span><b class="num">${gigs.length}</b></div>
       </div>
-      <div class="split" style="grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)">
+      <div class="split split-cal">
         <section class="section">
           <div class="cal-wrap"><div id="cal"></div></div>
           <p class="cal-hint">주간 보기에서 <b>시간대를 끌어서 선택</b>하면 그 시간으로 합주가 등록돼요 · 일정 블록을 <b>끌어서 날짜·시간 이동</b>, 아래 끝을 끌어서 길이 조절 · 클릭하면 수정 · <span style="background:var(--violet);color:#fff;padding:0 4px">보라</span> = 공연</p>
@@ -903,9 +915,19 @@ window.Views = window.Views || {};
     if (window.FullCalendar) {
       const initialDate = calendar ? calendar.getDate() : undefined;
       if (calendar) { try { calendar.destroy(); } catch (e) { /* 이미 DOM에서 빠짐 */ } calendar = null; } // 리스너 누수 방지
+      // 폰에서는 7일 주간 보기가 너무 좁아 3일 보기를 기본으로, 버튼은 아래 줄로
+      const narrow = window.matchMedia('(max-width: 600px)').matches;
+      const weekView = narrow ? 'timeGrid3' : 'timeGridWeek';
+      const view0 = calView === 'timeGridWeek' || calView === 'timeGrid3' ? weekView : calView;
       calendar = new FullCalendar.Calendar(calEl, {
-        initialView: calView, initialDate, locale: 'ko', height: 'auto', firstDay: 1,
-        headerToolbar: { left: 'prev,next today', center: 'title', right: 'timeGridWeek,dayGridMonth,listMonth' },
+        initialView: view0, initialDate, locale: 'ko', height: 'auto', firstDay: 1,
+        views: { timeGrid3: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3일' } },
+        headerToolbar: narrow
+          ? { left: 'prev,next', center: 'title', right: 'today' }
+          : { left: 'prev,next today', center: 'title', right: 'timeGridWeek,dayGridMonth,listMonth' },
+        footerToolbar: narrow ? { center: 'timeGrid3,dayGridMonth,listMonth' } : false,
+        ...(narrow ? { dayHeaderFormat: { weekday: 'short', day: 'numeric' } } : {}),
+        selectLongPressDelay: 350, eventLongPressDelay: 350, // 터치: 길게 누르는 시간 단축
         buttonText: { today: '오늘', week: '주', month: '월', list: '목록' },
         allDayText: '공연', slotMinTime: '08:00:00', slotMaxTime: '24:00:00', scrollTime: '17:00:00',
         slotDuration: '00:30:00', snapDuration: '00:10:00', nowIndicator: true, expandRows: true,
@@ -955,10 +977,10 @@ window.Views = window.Views || {};
       <section class="section">
         <div class="section-head"><h3>Songs</h3><span class="count">drag the slider · 100% = stage ready</span></div>
         ${songs.length ? `<div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>title</th><th>lv</th><th style="width:45%">progress</th><th class="r">%</th></tr></thead>
+          <thead><tr><th>title</th><th class="hide-sm">lv</th><th style="width:45%">progress</th><th class="r">%</th></tr></thead>
           <tbody>${songs.map((s) => `<tr>
             <td><b>${esc(s.title)}</b> <span class="muted" style="font-size:12px">${esc(s.artist)}</span></td>
-            <td class="dots">${diff(s.difficulty)}</td>
+            <td class="dots hide-sm">${diff(s.difficulty)}</td>
             <td><div class="prog"><input type="range" min="0" max="100" step="5" value="${s.progress}" data-p="${s.id}" aria-label="${esc(s.title)} 진행도"></div></td>
             <td class="r mono num" data-pv="${s.id}">${s.progress}%${s.progress >= 100 ? ' ✓' : ''}</td>
           </tr>`).join('')}</tbody></table></div>` : UI.empty('Songs', 'Setlist 화면에서 곡을 먼저 등록하세요.', '<a class="btn solid" href="#/setlist">곡 등록하러 가기</a>')}
