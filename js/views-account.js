@@ -14,7 +14,7 @@ window.Views = window.Views || {};
         <button type="button" class="btn sm" data-mode="login">로그인</button>
         <button type="button" class="btn sm" data-mode="signup">회원가입</button>
       </div>
-      <div class="field"><span class="lbl">아이디</span><input name="username" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="영문 소문자·숫자·_ 3~20자" required></div>
+      <div class="field"><span class="lbl">아이디</span><input name="username" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="80" placeholder="영문 소문자·숫자·_ 3~20자" required></div>
       <div class="field"><span class="lbl">password</span><input name="password" type="password" minlength="6" autocomplete="current-password" required></div>
       <div class="field signup-only"><span class="lbl">password 확인</span><input name="password2" type="password" autocomplete="new-password"></div>
       <div class="field signup-only"><span class="lbl">nickname</span><input name="nickname" maxlength="20" placeholder="친구에게 보일 이름"></div>
@@ -34,7 +34,7 @@ window.Views = window.Views || {};
           f.querySelector('button[type=submit]').textContent = m === 'signup' ? '가입하기' : '로그인';
           f.querySelector('.auth-note').textContent = m === 'signup'
             ? '처음 가입하면 지금 이 브라우저에 있는 데이터가 내 계정으로 옮겨집니다.'
-            : '로그인하면 어느 기기에서든 같은 데이터를 볼 수 있습니다.';
+            : '로그인하면 어느 기기에서든 같은 데이터를 볼 수 있습니다. 예전에 이메일로 가입했다면 이메일 주소로 로그인하세요.';
         };
         f.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => set(b.dataset.mode)));
         set(cur);
@@ -42,6 +42,7 @@ window.Views = window.Views || {};
       async onSubmit(d, f) {
         const id = d.username.trim().toLowerCase(), pw = d.password;
         if (!id || !pw) { toast('아이디와 비밀번호를 입력하세요'); return false; }
+        if (cur === 'signup' && id.includes('@')) { toast('회원가입은 이메일이 아닌 아이디로 합니다'); return false; }
         if (cur === 'signup' && !A.USERNAME_RE.test(id)) { toast('아이디는 영문 소문자·숫자·_ 3~20자로 입력하세요'); return false; }
         if (pw.length < 6) { toast('비밀번호는 6자 이상이어야 합니다'); return false; }
         if (cur === 'signup' && pw !== d.password2) { toast('비밀번호 확인이 일치하지 않습니다'); return false; }
@@ -87,6 +88,13 @@ window.Views = window.Views || {};
   V.account = (el) => {
     if (!A.configured) {
       el.innerHTML = head('LOCAL', 'Account') + UI.empty('Offline', 'Supabase 설정(js/config.js)이 비어 있어 로그인을 쓸 수 없습니다.');
+      return;
+    }
+    if (A.failed) {
+      el.innerHTML = head('OFFLINE', 'Account') + UI.empty('Offline',
+        `서버에 연결하지 못했습니다.${A.restoring ? '<br>지난번 로그인한 계정의 데이터로 작업 중이며, 변경 내용은 다음 접속 때 계정에 저장됩니다.' : ''}`,
+        '<button class="btn solid" id="retry">다시 연결</button>');
+      el.querySelector('#retry').onclick = () => location.reload();
       return;
     }
     if (!A.ready) {

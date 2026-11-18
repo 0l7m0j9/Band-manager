@@ -42,9 +42,9 @@ const UI = (() => {
   const logo = (band, cls = '') => {
     if (!band) return '';
     const bg = band.color || '#141210';
-    return `<span class="logo ${cls}" style="background:${esc(bg)}">${band.logo ? `<img src="${band.logo}" alt="">` : esc(initials(band.name))}</span>`;
+    return `<span class="logo ${cls}" style="background:${esc(bg)}">${band.logo ? `<img src="${esc(band.logo)}" alt="">` : esc(initials(band.name))}</span>`;
   };
-  const diff = (n) => '●'.repeat(n) + '○'.repeat(5 - n);
+  const diff = (n) => { n = Math.max(0, Math.min(5, Math.round(Number(n)) || 0)); return '●'.repeat(n) + '○'.repeat(5 - n); };
 
   /* ---------- toast ---------- */
   let tt;

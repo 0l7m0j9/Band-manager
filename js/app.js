@@ -52,6 +52,11 @@ const App = (() => {
     btn.hidden = !A.configured;
     if (!A.configured) return;
     if (!A.user) {
+      if (A.restoring) {
+        btn.innerHTML = `<span class="lbl">${A.failed ? 'offline' : 'connecting'}</span><b>내 계정</b>`;
+        info.textContent = A.failed ? 'offline · 연결되면 계정에 저장됩니다' : 'connecting to your account…';
+        return;
+      }
       btn.innerHTML = '<span class="lbl">guest</span><b>로그인</b>';
       info.textContent = 'data saved in this browser';
       return;
@@ -68,12 +73,14 @@ const App = (() => {
     const key = name === 'festival' ? (params[1] === 'timetable' ? 'timetable' : 'festivals') : (routes[name] ? name : 'home');
     document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === key));
     shell();
-    try {
-      fn(view, params);
-    } catch (e) {
+    const fail = (e) => {
       console.error(e);
       view.innerHTML = UI.empty('Oops', '화면을 그리는 중 오류가 발생했습니다. 데모 데이터를 초기화해 보세요.');
-    }
+    };
+    try {
+      const r = fn(view, params);
+      if (r && typeof r.catch === 'function') r.catch(fail); // 비동기 화면(포스터 등)의 오류도 처리
+    } catch (e) { fail(e); }
   }
 
   let lastRoute = '';
@@ -104,7 +111,12 @@ const App = (() => {
   Store.Auth.onChange(() => { account(); if (Store.Auth.user) Store.Friends.refresh().catch(() => {}); if (parse().name === 'account') safeRender(); });
   Store.Friends.onChange(() => { account(); if (parse().name === 'account') safeRender(); });
 
-  Store.initRemote().catch((e) => { console.warn(e); UI.toast('서버에 연결하지 못했습니다 — 이 브라우저에만 저장됩니다'); });
+  Store.initRemote().catch((e) => {
+    console.warn(e);
+    UI.toast(Store.Auth.restoring ? '오프라인 — 변경 내용은 다음 접속 때 계정에 저장됩니다' : '서버에 연결하지 못했습니다 — 이 브라우저에만 저장됩니다');
+    account();
+    if (parse().name === 'account') safeRender();
+  });
 
   return { render };
 })();

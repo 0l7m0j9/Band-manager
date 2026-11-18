@@ -643,6 +643,22 @@ input[type="color"] { width: 44px; height: 32px; padding: 0; border: 1px solid v
 .tpl-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 .tpl-pick button { border: 1px solid var(--ink); padding: 10px; cursor: pointer; font-weight: 800; text-align: left; }
 .tpl-pick button.on { outline: 3px solid var(--ink); outline-offset: 2px; }
+.tpl-pick.tpl-3 { grid-template-columns: repeat(3, 1fr); }
+.tpl-pick.tpl-3 button { background: var(--paper); font-size: 13px; text-align: center; padding: 8px 4px; }
+.tpl-pick.tpl-3 button.on { background: var(--ink); color: var(--paper); }
+.ai-box { border: 1px solid var(--ink); background: var(--paper); padding: 12px; margin-bottom: 6px; }
+.ai-box textarea { width: 100%; resize: vertical; min-height: 54px; font: inherit; }
+.ai-note { font-size: 12px; margin: 8px 0 0; line-height: 1.5; }
+.ai-concepts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.ai-concepts:empty { display: none; }
+.ai-concepts .search-msg { grid-column: 1 / -1; }
+.ai-card { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer; text-align: left; color: inherit; font: inherit; min-width: 0; }
+.ai-card canvas { width: 100%; height: auto; border: 1px solid var(--ink); transition: transform .15s; }
+.ai-card:hover canvas, .ai-card:focus-visible canvas { transform: translateY(-3px); box-shadow: 4px 4px 0 var(--ink); }
+.ai-card b { font-size: 12px; line-height: 1.2; }
+.ai-card small { font-size: 10px; line-height: 1.3; opacity: .75; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.poster-colors .field { flex: 1 1 50px; min-width: 0; }
+.poster-colors input[type=color] { width: 100%; height: 32px; }
 
 /* ---------- Stage designer ---------- */
 .sd-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }

@@ -7,6 +7,9 @@
   const db = () => Store.db;
   const go = (h) => { location.hash = h; };
   const PX = 2; // 1분 = 2px
+  /** 창이 열려 있는 사이 친구 변경으로 데이터가 새로 들어왔을 수 있으므로, 저장할 때 id로 현재 페스티벌을 다시 찾음 */
+  const liveF = (f) => f && db().festivals.find((x) => x.id === f.id);
+  const gone = () => { toast('다른 곳에서 삭제된 항목이라 저장하지 못했습니다'); };
 
   const ORIGIN = { mine: 'MY BAND', real: 'REAL', virtual: 'VIRTUAL' };
   const actOf = (f, id) => f.acts.find((a) => a.id === id);
@@ -73,8 +76,9 @@
         const ds = Math.max(0, Math.min(23, Number(d.dayStart))), de = Math.max(ds + 1, Math.min(30, Number(d.dayEnd)));
         const patch = { name: d.name.trim(), startDate: d.startDate || Store.dayOffset(30), days: Math.max(1, Math.min(5, Number(d.days) || 1)), venue: d.venue.trim(), theme: d.theme.trim(), bg: d.bg, accent: d.accent, dayStart: ds, dayEnd: de, changeover: Math.max(0, Number(d.changeover) || 0) };
         if (fest) {
-          Object.assign(fest, patch);
-          fest.slots = fest.slots.filter((s) => s.day < fest.days);
+          const cur = liveF(fest); if (!cur) return gone();
+          Object.assign(cur, patch);
+          cur.slots = cur.slots.filter((s) => s.day < cur.days);
         } else {
           const nf = { id: Store.uid(), ...patch, stages: [{ id: Store.uid(), name: 'Main Stage', color: '#f2541b' }], acts: [], slots: [], favorites: [], layouts: {} };
           db().festivals.push(nf); db().activeFestivalId = nf.id;
@@ -121,7 +125,7 @@
       <nav class="tabs">${tabs.map(([k, v]) => `<a href="#/festival/${f.id}/${k}" class="${k === tab ? 'on' : ''}">${v}</a>`).join('')}</nav>
       <div id="tab"></div>`;
     const t = el.querySelector('#tab');
-    ({ overview, lineup, timetable, poster, stage }[tab] || overview)(t, f, rest);
+    return ({ overview, lineup, timetable, poster, stage }[tab] || overview)(t, f, rest); // 포스터는 비동기 → 오류를 App 이 처리
   };
 
   /* ---------- Overview: info + stages ---------- */
@@ -177,9 +181,10 @@
       row.querySelector('[data-rm]').onclick = () => {
         if (f.stages.length === 1) { toast('무대는 최소 1개 필요합니다'); return; }
         confirm(`${esc(s.name)} 무대와 배치된 공연 ${f.slots.filter((x) => x.stageId === s.id).length}개를 삭제할까요?`, () => {
-          f.stages = f.stages.filter((x) => x.id !== s.id);
-          f.slots = f.slots.filter((x) => x.stageId !== s.id);
-          Object.keys(f.layouts).forEach((k) => k.startsWith(s.id) && delete f.layouts[k]);
+          const cf = liveF(f); if (!cf) return gone();
+          cf.stages = cf.stages.filter((x) => x.id !== s.id);
+          cf.slots = cf.slots.filter((x) => x.stageId !== s.id);
+          Object.keys(cf.layouts).forEach((k) => k.startsWith(s.id) && delete cf.layouts[k]);
           Store.save(); App.render();
         });
       };
@@ -201,7 +206,8 @@
       onSubmit(d) {
         if (!d.name.trim()) { toast('이름을 입력하세요'); return false; }
         const patch = { name: d.name.trim(), genre: d.genre.trim(), origin: d.origin, headliner: !!d.headliner };
-        if (act) Object.assign(act, patch); else f.acts.push({ id: Store.uid(), ...patch });
+        const cf = liveF(f); if (!cf) return gone();
+        if (act) { const ca = actOf(cf, act.id); if (!ca) return gone(); Object.assign(ca, patch); } else cf.acts.push({ id: Store.uid(), ...patch });
         Store.save(); App.render();
       },
     });
@@ -242,9 +248,10 @@
       row.querySelector('[data-h]').onclick = () => { a.headliner = !a.headliner; Store.save(); App.render(); };
       row.querySelector('[data-e]').onclick = () => actForm(f, a);
       row.querySelector('[data-rm]').onclick = () => confirm(`${esc(a.name)}을(를) 라인업에서 삭제할까요?`, () => {
-        f.acts = f.acts.filter((x) => x.id !== a.id);
-        f.slots = f.slots.filter((s) => s.actId !== a.id);
-        f.favorites = f.favorites.filter((x) => x !== a.id);
+        const cf = liveF(f); if (!cf) return gone();
+        cf.acts = cf.acts.filter((x) => x.id !== a.id);
+        cf.slots = cf.slots.filter((s) => s.actId !== a.id);
+        cf.favorites = cf.favorites.filter((x) => x !== a.id);
         Store.save(); App.render();
       });
     });
@@ -271,14 +278,20 @@
       extra: slot ? '<button type="button" class="btn ghost left" id="delSlot">배치 해제</button>' : '',
       onOpen(form, close) {
         const d = form.querySelector('#delSlot');
-        if (d) d.onclick = () => { f.slots = f.slots.filter((x) => x.id !== slot.id); Store.save(); close(); App.render(); };
+        if (d) d.onclick = () => {
+          const cf = liveF(f);
+          if (cf) { cf.slots = cf.slots.filter((x) => x.id !== slot.id); Store.save(); }
+          close(); App.render();
+        };
         form.querySelectorAll('a').forEach((a) => a.addEventListener('click', close));
       },
       onSubmit(d) {
+        const cf = liveF(f); if (!cf) return gone();
         let start = parseHm(d.start);
-        if (start < f.dayStart * 60 && f.dayEnd > 24) start += 24 * 60; // 자정 넘어가는 공연
+        if (start < cf.dayStart * 60 && cf.dayEnd > 24) start += 24 * 60; // 자정 넘어가는 공연
         const patch = { actId: d.actId, stageId: d.stageId, day: Number(d.day), start, dur: Math.max(5, Number(d.dur) || 45), changeover: d.changeover === '' ? null : Math.max(0, Number(d.changeover)) };
-        if (slot) Object.assign(slot, patch); else f.slots.push({ id: Store.uid(), ...patch });
+        if (slot) { const cs = cf.slots.find((x) => x.id === slot.id); if (!cs) return gone(); Object.assign(cs, patch); }
+        else cf.slots.push({ id: Store.uid(), ...patch });
         ttDay = patch.day;
         Store.save(); App.render();
       },
@@ -412,176 +425,112 @@
   V.timetableTab = timetable;
 
   /* ---------- Poster (Canvas) ---------- */
-  let posterTpl = 'ripple';
+  // 최근 AI 시안은 페스티벌별로 이 화면에만 보관 (저장되는 건 적용한 시안 하나 = f.poster)
+  let aiConcepts = null, aiFor = null, aiMood = '', aiBusy = false;
+
+  /** AI 에 보낼 페스티벌 요약 */
+  const posterBrief = (f) => ({
+    name: f.name, startDate: f.startDate, days: f.days, venue: f.venue, theme: f.theme,
+    hours: `${hm(f.dayStart * 60)}-${hm(f.dayEnd * 60)}`,
+    stages: f.stages.map((s) => s.name),
+    lineup: f.acts.map((a) => { const s = f.slots.find((x) => x.actId === a.id); return { name: a.name, genre: a.genre, headliner: a.headliner, day: s ? s.day + 1 : null }; }),
+  });
+
   async function poster(el, f) {
+    let sp = Poster.normalize(f.poster || Poster.preset('ripple', f), f);
+    const concepts = aiFor === f.id ? aiConcepts : null;
+    const opts = (obj, cur) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(v)}</option>`).join('');
+    const colors = [['bg', '배경'], ['fg', '글자'], ['accent', '강조'], ['accent2', '강조 2']];
     el.innerHTML = `
       <div class="poster-layout">
         <aside>
-          <div class="section-head"><h3>Template</h3></div>
-          <div class="tpl-pick">
-            <button data-tpl="ripple" class="${posterTpl === 'ripple' ? 'on' : ''}" style="background:${esc(f.bg)};color:${esc(f.accent)}"><span class="wave-sm" style="font-size:30px;color:inherit">Ripple</span></button>
-            <button data-tpl="grid" class="${posterTpl === 'grid' ? 'on' : ''}" style="background:#3d9a2b;color:#141210;font-size:22px;letter-spacing:-.03em">Grid</button>
+          <div class="section-head"><h3>AI Design</h3><span class="count">Claude</span></div>
+          <div class="ai-box">
+            <textarea class="input" id="aiMood" maxlength="300" rows="2" placeholder="원하는 분위기 (예: 90년대 레트로 · 네온 사이버펑크 · 한여름 강변 피크닉)">${esc(aiMood)}</textarea>
+            <div class="row" style="margin-top:8px">
+              <button class="btn solid" id="aiGo" ${aiBusy ? 'disabled' : ''}>${aiBusy ? 'AI가 디자인하는 중…' : '✦ AI 시안 3개'}</button>
+              <button class="btn" id="rand" title="AI 없이 무작위 조합">🎲 랜덤</button>
+            </div>
+            <p class="muted ai-note">${Store.AI.available
+              ? '페스티벌 이름·테마·장소·라인업·장르를 보고 서로 다른 시안 3개를 제안합니다. 20~40초 걸립니다.'
+              : 'AI 디자인은 로그인하면 쓸 수 있습니다. 🎲 랜덤은 언제나 가능합니다.'}</p>
+            <div class="ai-concepts" id="aiList">${aiBusy ? '<p class="search-msg">시안을 만드는 중…</p>' : (concepts || []).map((c, i) => `
+              <button type="button" class="ai-card" data-ci="${i}" title="${esc(c.rationale)}">
+                <canvas width="216" height="270"></canvas>
+                <b>${esc(c.name)}</b><small>${esc(c.rationale)}</small>
+              </button>`).join('')}</div>
           </div>
+
+          <div class="section-head" style="margin-top:18px"><h3>Edit</h3>${sp.name ? `<span class="count">${esc(sp.name)}</span>` : ''}</div>
+          <div class="tpl-pick tpl-3">${Object.entries(Poster.LAYOUTS).map(([k, v]) => `<button type="button" data-layout="${k}" class="${sp.layout === k ? 'on' : ''}">${v}</button>`).join('')}</div>
           <div class="row">
-            <label class="field" style="flex:0 0 auto"><span class="lbl">background</span><input type="color" id="pbg" value="${esc(f.bg)}"></label>
-            <label class="field" style="flex:0 0 auto"><span class="lbl">accent</span><input type="color" id="pac" value="${esc(f.accent)}"></label>
+            <label class="field"><span class="lbl">pattern</span><select class="input" data-k="pattern">${opts(Poster.PATTERNS, sp.pattern)}</select></label>
+            <label class="field"><span class="lbl">title font</span><select class="input" data-k="headlineFont">${opts(Poster.FONTS, sp.headlineFont)}</select></label>
           </div>
-          <p class="muted" style="font-size:13px;margin-bottom:14px">라인업 · 헤드라이너 · 날짜 · 장소가 자동으로 배치됩니다. 헤드라이너는 Lineup 탭에서 ★로 지정하세요.</p>
+          <div class="row poster-colors">${colors.map(([k, n]) => `<label class="field"><span class="lbl">${n}</span><input type="color" data-c="${k}" value="${sp.palette[k]}"></label>`).join('')}</div>
+          <p class="muted ai-note" id="contrastWarn" hidden>⚠ 글자색과 배경색 대비가 낮아 읽기 어렵습니다</p>
+          <label class="field"><span class="lbl">kicker</span><input class="input" data-k="kicker" maxlength="40" value="${esc(sp.kicker)}" placeholder="MUSIC FESTIVAL"></label>
+          <label class="field"><span class="lbl">tagline</span><input class="input" data-k="tagline" maxlength="60" value="${esc(sp.tagline)}" placeholder="포스터 카피 한 줄"></label>
+          <label class="field"><span class="lbl">footer note</span><input class="input" data-k="footerNote" maxlength="60" value="${esc(sp.footerNote)}" placeholder="예: 전석 무료 · 우천 시 진행"></label>
+          <div class="row">
+            <label class="field"><span class="lbl">headliner</span><select class="input" data-k="headlinerScale">${opts({ huge: 'Huge', large: 'Large', normal: 'Normal' }, sp.headlinerScale)}</select></label>
+            <label class="field"><span class="lbl">grain</span><select class="input" data-k="grain">${opts({ none: 'None', light: 'Light', heavy: 'Heavy' }, sp.grain)}</select></label>
+          </div>
+          <label class="row" style="gap:8px;font-weight:700;margin-bottom:14px"><input type="checkbox" data-k="uppercase" ${sp.uppercase ? 'checked' : ''}> 대문자로 표기</label>
           <div class="row"><button class="btn solid" id="dl">PNG 저장</button><button class="btn" id="share">공유</button></div>
         </aside>
         <div><canvas class="poster-canvas" id="pc" width="1080" height="1350" aria-label="페스티벌 포스터"></canvas></div>
       </div>`;
+
     const canvas = el.querySelector('#pc');
-    el.querySelectorAll('[data-tpl]').forEach((b) => b.onclick = () => { posterTpl = b.dataset.tpl; App.render(); });
-    el.querySelector('#pbg').onchange = (e) => { f.bg = e.target.value; Store.save(); App.render(); };
-    el.querySelector('#pac').onchange = (e) => { f.accent = e.target.value; Store.save(); App.render(); };
+    const redraw = () => {
+      Poster.draw(canvas, f, sp);
+      el.querySelector('#contrastWarn').hidden = Poster.contrast(sp.palette.bg, sp.palette.fg) >= 3;
+    };
+    /** 시안 저장 (창이 열린 사이 데이터가 새로 들어왔을 수 있어 현재 페스티벌을 다시 찾음) */
+    const save = () => { const cf = liveF(f); if (!cf) return gone(); cf.poster = sp; Store.save(); };
+    const apply = (spec) => { sp = Poster.normalize(spec, f); save(); App.render(); };
+
+    el.querySelectorAll('[data-layout]').forEach((b) => b.onclick = () => apply({ ...sp, layout: b.dataset.layout }));
+    el.querySelectorAll('[data-k]').forEach((inp) => {
+      const read = () => { sp = Poster.normalize({ ...sp, [inp.dataset.k]: inp.type === 'checkbox' ? inp.checked : inp.value }, f); };
+      inp.addEventListener('input', () => { read(); redraw(); });
+      inp.addEventListener('change', () => { read(); redraw(); save(); });
+    });
+    el.querySelectorAll('[data-c]').forEach((inp) => {
+      const read = () => { sp = Poster.normalize({ ...sp, palette: { ...sp.palette, [inp.dataset.c]: inp.value } }, f); };
+      inp.addEventListener('input', () => { read(); redraw(); });
+      inp.addEventListener('change', () => { read(); redraw(); save(); });
+    });
+    el.querySelector('#rand').onclick = () => apply(Poster.random(f));
     el.querySelector('#dl').onclick = () => UI.download(canvas.toDataURL('image/png'), `${f.name}-poster.png`);
     el.querySelector('#share').onclick = () => UI.shareCanvas(canvas, `${f.name}-poster.png`, `${f.name} @ ${f.venue}`);
-    try {
-      await Promise.all(['400 80px "Instrument Serif"', '400 40px Michroma', '800 40px Pretendard', '500 30px Pretendard', '400 20px "Space Mono"'].map((x) => document.fonts.load(x)));
-    } catch (e) { /* fallback fonts */ }
-    drawPoster(canvas, f, posterTpl);
-  }
 
-  function grain(ctx, w, h, alpha = .1) {
-    const n = document.createElement('canvas'); n.width = n.height = 160;
-    const nc = n.getContext('2d'), img = nc.createImageData(160, 160);
-    for (let i = 0; i < img.data.length; i += 4) { const v = Math.random() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255 * alpha * Math.random(); }
-    nc.putImageData(img, 0, 0);
-    ctx.fillStyle = ctx.createPattern(n, 'repeat'); ctx.fillRect(0, 0, w, h);
-  }
-  function fitFont(ctx, text, family, weight, maxW, maxSize) {
-    let size = maxSize;
-    do { ctx.font = `${weight} ${size}px ${family}`; size -= 4; } while (ctx.measureText(text).width > maxW && size > 12);
-    return size + 4;
-  }
-  /** 물결 왜곡 텍스트 */
-  function rippleText(ctx, text, cx, cy, size, color, maxW) {
-    const s = fitFont(ctx, text, '"Instrument Serif", serif', 400, maxW, size);
-    const off = document.createElement('canvas');
-    off.width = Math.ceil(maxW + 120); off.height = Math.ceil(s * 1.4);
-    const o = off.getContext('2d');
-    o.font = `400 ${s}px "Instrument Serif", serif`; o.fillStyle = color; o.textAlign = 'center'; o.textBaseline = 'middle';
-    o.fillText(text, off.width / 2, off.height / 2);
-    const amp = s * .045;
-    for (let y = 0; y < off.height; y++) {
-      const dx = Math.sin(y / (s * .09)) * amp + Math.sin(y / (s * .023) + 1.3) * amp * .35;
-      ctx.drawImage(off, 0, y, off.width, 1, cx - off.width / 2 + dx, cy - off.height / 2 + y, off.width, 1);
-    }
-  }
-  function wrapCenter(ctx, words, cx, y, maxW, lineH, sep = '  ·  ') {
-    let line = '';
-    const lines = [];
-    words.forEach((w) => {
-      const t = line ? line + sep + w : w;
-      if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+    el.querySelector('#aiGo').onclick = async () => {
+      if (!Store.AI.available) { toast('AI 디자인은 로그인하면 쓸 수 있습니다'); go('#/account'); return; }
+      aiMood = el.querySelector('#aiMood').value.trim();
+      aiBusy = true; App.render();
+      const fid = f.id;
+      try {
+        const cs = await Store.AI.posterConcepts({ festival: posterBrief(f), mood: aiMood });
+        aiConcepts = cs.map((c) => Poster.normalize(c, f)); aiFor = fid;
+        toast('시안이 도착했습니다 — 눌러서 적용하세요');
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        aiBusy = false;
+        if (location.hash.includes(`/festival/${fid}/poster`)) App.render();
+      }
+    };
+    el.querySelectorAll('[data-ci]').forEach((b) => {
+      const c = concepts[Number(b.dataset.ci)];
+      b.onclick = () => { apply(c); toast(`「${c.name}」 시안을 적용했습니다 · 아래에서 더 다듬을 수 있어요`); };
     });
-    if (line) lines.push(line);
-    lines.forEach((l, i) => ctx.fillText(l, cx, y + i * lineH));
-    return y + lines.length * lineH;
-  }
 
-  function drawPoster(canvas, f, tpl) {
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height, M = 70;
-    const startD = new Date(f.startDate + 'T00:00:00');
-    const endIso = addDays(f.startDate, f.days - 1);
-    const mon = startD.toLocaleString('en', { month: 'short' }).toUpperCase();
-    const dateLine = f.days > 1 ? `${startD.getDate()} / ${new Date(endIso + 'T00:00:00').getDate()} ${mon}  ${startD.getFullYear()}` : `${startD.getDate()} ${mon}  ${startD.getFullYear()}`;
-    const byDay = Array.from({ length: f.days }, (_, d) => {
-      const ids = [...new Set(f.slots.filter((s) => s.day === d).sort((a, b) => b.start - a.start).map((s) => s.actId))];
-      return ids.map((id) => actOf(f, id)).filter(Boolean).sort((a, b) => b.headliner - a.headliner);
-    });
-    const unscheduled = f.acts.filter((a) => !f.slots.some((s) => s.actId === a.id));
-    if (unscheduled.length) {
-      if (byDay.every((d) => !d.length)) byDay[0] = [...f.acts].sort((a, b) => b.headliner - a.headliner);
-    }
-    ctx.clearRect(0, 0, W, H);
-    ctx.textBaseline = 'alphabetic';
-
-    if (tpl === 'ripple') {
-      ctx.fillStyle = f.bg; ctx.fillRect(0, 0, W, H);
-      grain(ctx, W, H, .12);
-      const fg = '#fff8f2';
-      ctx.fillStyle = fg; ctx.font = '500 30px Pretendard'; ctx.textAlign = 'left';
-      ctx.fillText(dateLine, M, M + 20);
-      ctx.fillText(`H ${hm(f.dayStart * 60)}`, M, M + 60);
-      ctx.textAlign = 'right';
-      ctx.fillText((f.venue || '').toUpperCase(), W - M, M + 20);
-      ctx.fillText((f.theme || '').toUpperCase().slice(0, 34), W - M, M + 60);
-      // title
-      ctx.textAlign = 'center';
-      fitFont(ctx, 'MUSIC FESTIVAL', 'Michroma', 400, W - M * 4, 56);
-      ctx.fillStyle = fg; ctx.fillText('MUSIC FESTIVAL', W / 2, 270);
-      rippleText(ctx, f.name, W / 2, 410, 230, f.accent, W - M * 2);
-      // lineup
-      let y = 620;
-      byDay.forEach((acts, d) => {
-        if (!acts.length) return;
-        ctx.font = '500 30px Pretendard'; ctx.fillStyle = fg;
-        ctx.fillText(f.days > 1 ? dateEn(addDays(f.startDate, d)) : 'LINE UP', W / 2, y); y += 56;
-        const heads = acts.filter((a) => a.headliner).map((a) => a.name.toUpperCase());
-        const rest = acts.filter((a) => !a.headliner).map((a) => a.name.toUpperCase());
-        if (heads.length) { ctx.font = '800 64px Pretendard'; y = wrapCenter(ctx, heads, W / 2, y, W - M * 2, 72); }
-        ctx.font = '800 38px Pretendard';
-        y = wrapCenter(ctx, rest, W / 2, y + 6, W - M * 2.5, 50);
-        y += 40;
-      });
-      // footer
-      ctx.strokeStyle = fg; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(M, H - 150); ctx.lineTo(W - M, H - 150); ctx.stroke();
-      ctx.textAlign = 'left'; ctx.font = '400 18px "Space Mono"'; ctx.fillStyle = fg;
-      ctx.fillText('STAGES', M, H - 112);
-      ctx.font = '600 26px Pretendard';
-      ctx.fillText(f.stages.map((s) => s.name.toUpperCase()).join('  /  ').slice(0, 60), M, H - 76);
-      ctx.textAlign = 'right'; ctx.font = '800 30px Pretendard';
-      ctx.fillText('FREE ENTRY', W - M, H - 108);
-      ctx.font = '500 34px Pretendard';
-      ctx.fillText(f.name.toLowerCase().replace(/\s+/g, '') + '.fest', W - M, H - 66);
-    } else {
-      // MUTEK-like grid template
-      const bg = '#3d9a2b', ink = '#141210', lime = '#d6ff3a';
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-      grain(ctx, W, H, .08);
-      ctx.fillStyle = lime; ctx.fillRect(0, 0, W, 54);
-      ctx.fillStyle = ink; ctx.font = '700 20px Pretendard'; ctx.textAlign = 'left';
-      for (let x = -20; x < W; x += 170) ctx.fillText('get ticket   ↗', x, 35);
-      ctx.font = '400 30px Michroma'; ctx.fillText(f.name.toUpperCase().slice(0, 22), M, 130);
-      ctx.font = '500 18px Pretendard';
-      ctx.fillText('international festival of', W - 330, 112); ctx.fillText('independent music & bands', W - 330, 136);
-      // big repeated headliner
-      const head = (f.acts.find((a) => a.headliner) || f.acts[0] || { name: f.name }).name;
-      ctx.font = '600 210px Pretendard';
-      const hw = ctx.measureText(head).width + 260;
-      const rowY = [400, 620];
-      rowY.forEach((ry, r) => {
-        let x = r ? -hw * .45 : -40;
-        while (x < W) {
-          ctx.fillStyle = ink; ctx.fillText(head, x, ry);
-          ctx.fillStyle = f.accent; ctx.fillRect(x + hw - 230, ry - 140, 190, 120);
-          ctx.fillStyle = ink; ctx.font = '400 16px "Space Mono"'; ctx.fillText('LIVE', x + hw - 290, ry - 150); ctx.font = '600 210px Pretendard';
-          x += hw;
-        }
-      });
-      // lineup columns by day
-      const colW = (W - M * 2 - 40 * (f.days - 1)) / Math.max(1, Math.min(f.days, 3));
-      byDay.slice(0, 3).forEach((acts, d) => {
-        const x = M + d * (colW + 40);
-        let y = 760;
-        ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + colW, y); ctx.stroke();
-        ctx.fillStyle = ink; ctx.textAlign = 'left';
-        ctx.font = '700 24px Pretendard'; ctx.fillText(`Day ${d + 1}`, x, y + 40);
-        ctx.font = '500 22px Pretendard'; ctx.fillText(dateKo(addDays(f.startDate, d), { year: 'numeric' }), x, y + 72);
-        y += 120;
-        acts.slice(0, 9).forEach((a) => {
-          const s = fitFont(ctx, a.name, 'Pretendard', a.headliner ? 800 : 600, colW, a.headliner ? 44 : 32);
-          ctx.fillText(a.name, x, y); y += s + 12;
-        });
-      });
-      ctx.font = '500 22px Pretendard'; ctx.textAlign = 'left';
-      ctx.fillText(`${f.venue}  ·  ${hm(f.dayStart * 60)} — ${hm(f.dayEnd * 60)}`, M, H - 60);
-      ctx.textAlign = 'right'; ctx.fillText(`${f.stages.length} stages / ${f.acts.length} acts`, W - M, H - 60);
-    }
+    await Poster.fonts();
+    if (!el.isConnected) return;
+    redraw();
+    el.querySelectorAll('[data-ci]').forEach((b) => Poster.draw(b.querySelector('canvas'), f, concepts[Number(b.dataset.ci)]));
   }
 
   /* ---------- Stage Designer ---------- */
@@ -680,7 +629,7 @@
   V.timetable = (el) => {
     const f = Store.festival();
     if (!f) { el.innerHTML = V.pageHead(['timetable'], 'TIME', 'Table') + UI.empty('Festival', '먼저 페스티벌을 만들어주세요.', '<a class="btn solid" href="#/festivals">페스티벌 만들기</a>'); return; }
-    go(`#/festival/${f.id}/timetable`);
+    location.replace(`#/festival/${f.id}/timetable`); // 기록을 남기지 않아 뒤로가기가 다시 여기로 튕기지 않음
   };
 
   /* ================= PERSONAL FESTIVAL ================= */
@@ -768,34 +717,41 @@
 
   function drawMyPlan(c, f, fav) {
     const ctx = c.getContext('2d'), W = c.width, H = c.height, M = 70;
-    ctx.fillStyle = f.bg; ctx.fillRect(0, 0, W, H);
-    grain(ctx, W, H, .12);
-    ctx.fillStyle = '#d6ff3a'; ctx.fillRect(0, 0, W, 50);
-    ctx.fillStyle = '#141210'; ctx.font = '700 20px Pretendard'; ctx.textAlign = 'left';
+    // 페스티벌 포스터 시안의 색을 그대로 사용
+    const { bg, fg, accent, accent2 } = Poster.normalize(f.poster || Poster.preset('ripple', f), f).palette;
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    Poster.grain(ctx, W, H, .12);
+    ctx.fillStyle = accent2; ctx.fillRect(0, 0, W, 50);
+    ctx.fillStyle = Poster.contrast(accent2, '#141210') >= Poster.contrast(accent2, '#ffffff') ? '#141210' : '#ffffff';
+    ctx.font = '700 20px Pretendard'; ctx.textAlign = 'left';
     for (let x = 0; x < W; x += 230) ctx.fillText('MY TIMETABLE  ↗', x + 10, 33);
-    rippleText(ctx, f.name, W / 2, 170, 170, f.accent, W - M * 2);
-    let y = 330;
+    Poster.wave(ctx, f.name, W / 2, 170, 170, accent, W - M * 2, 'center');
+    const all = [];
     for (let d = 0; d < f.days; d++) {
       const ss = f.slots.filter((s) => s.day === d && fav.has(s.actId)).sort((a, b) => a.start - b.start);
-      if (!ss.length) continue;
-      ctx.fillStyle = '#fff8f2'; ctx.font = '400 22px "Space Mono"'; ctx.textAlign = 'left';
+      if (ss.length) all.push([d, ss]);
+    }
+    let y = 330, hidden = 0;
+    all.forEach(([d, ss]) => {
+      if (y > H - 200) { hidden += ss.length; return; }
+      ctx.fillStyle = fg; ctx.font = '400 22px "Space Mono"'; ctx.textAlign = 'left';
       ctx.fillText(dayLabel(f, d), M, y); y += 20;
       ss.forEach((s) => {
-        if (y > H - 120) return;
-        ctx.strokeStyle = '#141210'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(M, y); ctx.lineTo(W - M, y); ctx.stroke();
-        ctx.fillStyle = '#141210'; ctx.font = '400 24px "Space Mono"';
+        if (y > H - 200) { hidden++; return; }
+        ctx.strokeStyle = fg; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(M, y); ctx.lineTo(W - M, y); ctx.stroke();
+        ctx.fillStyle = fg; ctx.font = '400 24px "Space Mono"';
         ctx.fillText(`${hm(s.start)}–${hm(s.start + s.dur)}`, M, y + 50);
-        ctx.font = '800 42px Pretendard';
         const name = actOf(f, s.actId).name;
-        fitFont(ctx, name, 'Pretendard', 800, W - M * 2 - 470, 46);
+        Poster.fitFont(ctx, name, 'grotesk', W - M * 2 - 470, 46);
         ctx.fillText(name, M + 230, y + 54);
         ctx.font = '500 22px Pretendard'; ctx.textAlign = 'right';
         ctx.fillText(stageOf(f, s.stageId)?.name || '', W - M, y + 50); ctx.textAlign = 'left';
         y += 80;
       });
       y += 50;
-    }
-    ctx.fillStyle = '#fff8f2'; ctx.font = '500 24px Pretendard'; ctx.textAlign = 'left';
+    });
+    if (hidden) { ctx.fillStyle = fg; ctx.font = '700 26px Pretendard'; ctx.textAlign = 'left'; ctx.fillText(`+ ${hidden}개 공연 더 있음`, M, H - 120); }
+    ctx.fillStyle = fg; ctx.font = '500 24px Pretendard'; ctx.textAlign = 'left';
     ctx.fillText(`${f.venue}`, M, H - 60);
     ctx.textAlign = 'right'; ctx.fillText('made with BAND MANAGER', W - M, H - 60);
   }

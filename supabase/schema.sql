@@ -18,6 +18,8 @@ create table if not exists public.app_state (
   updated_at  timestamptz not null default now()
 );
 alter table public.app_state add column if not exists client_id text;  -- 마지막으로 저장한 브라우저(실시간 반영 시 자기 변경 무시용)
+-- 저장할 때마다 1씩 올라가는 버전. 앱은 "내가 아는 버전일 때만" 저장하고, 다르면 최신본과 합친 뒤 다시 저장함
+alter table public.app_state add column if not exists rev bigint not null default 0;
 
 create table if not exists public.profiles (
   id           uuid primary key references auth.users on delete cascade,
@@ -214,10 +216,10 @@ begin
     select data into src_data from public.app_state where id = src;
     if exists (select 1 from public.app_state where id = dst) then
       update public.app_state
-         set data = public.merge_state(data, src_data), updated_at = now(), client_id = null
+         set data = public.merge_state(data, src_data), updated_at = now(), client_id = null, rev = rev + 1
        where id = dst;
     elsif src_data is not null then
-      insert into public.app_state (id, data) values (dst, src_data);
+      insert into public.app_state (id, data, rev) values (dst, src_data, 1);
     end if;
     update public.profiles set workspace_id = dst where workspace_id = src;
     delete from public.app_state where id = src;
@@ -277,8 +279,8 @@ begin
   if not exists (select 1 from public.profiles where workspace_id = old_ws and id <> auth.uid()) then
     raise exception '공유 중인 친구가 없습니다';
   end if;
-  insert into public.app_state (id, data)
-  select new_ws, data from public.app_state where id = old_ws;
+  insert into public.app_state (id, data, rev)
+  select new_ws, data, 1 from public.app_state where id = old_ws;
   update public.profiles set workspace_id = new_ws where id = auth.uid();
   return new_ws;
 end $$;
@@ -293,6 +295,39 @@ grant  execute on function public.send_friend_request(text)             to authe
 grant  execute on function public.cancel_friend_request(uuid)           to authenticated;
 grant  execute on function public.leave_shared_workspace()              to authenticated;
 grant  execute on function public.list_friend_requests()                to authenticated;
+
+-- 내부용 함수는 RPC 로 직접 부르지 못하게 (로그인 없이 아이디 존재 여부를 알아내는 것 방지)
+revoke execute on function public.free_username(text, uuid)   from public, anon, authenticated;
+revoke execute on function public.merge_state(jsonb, jsonb)   from public, anon, authenticated;
+revoke execute on function public.handle_new_user()           from public, anon, authenticated;
+revoke execute on function public.my_workspace()              from public, anon;
+grant  execute on function public.my_workspace()              to authenticated;
+
+-- ---------- AI 포스터 사용량 (회원당 하루 횟수 제한, Edge Function 'poster-ai' 가 호출) ----------
+create table if not exists public.ai_usage (
+  user_id uuid not null references auth.users on delete cascade,
+  day     date not null default current_date,
+  count   int  not null default 0,
+  primary key (user_id, day)
+);
+alter table public.ai_usage enable row level security;
+revoke all on public.ai_usage from anon, authenticated;
+
+-- 오늘 사용 횟수를 1 올리고, 한도 안이면 true
+create or replace function public.use_ai_quota(daily_limit int default 20)
+returns boolean
+language plpgsql security definer set search_path = public as $$
+declare
+  n int;
+begin
+  if auth.uid() is null then return false; end if;
+  insert into public.ai_usage (user_id, day, count) values (auth.uid(), current_date, 1)
+  on conflict (user_id, day) do update set count = public.ai_usage.count + 1
+  returning count into n;
+  return n <= least(greatest(daily_limit, 1), 50);
+end $$;
+revoke execute on function public.use_ai_quota(int) from public, anon;
+grant  execute on function public.use_ai_quota(int) to authenticated;
 
 -- ---------- 실시간 반영 (친구가 바꾼 내용이 바로 보이도록) ----------
 do $$

@@ -7,6 +7,9 @@ window.Views = window.Views || {};
   const V = window.Views;
   const db = () => Store.db;
   const go = (hash) => { location.hash = hash; };
+  /** 창이 열려 있는 사이 친구 변경으로 데이터가 새로 들어왔을 수 있으므로, 저장할 때 id로 현재 객체를 다시 찾음 */
+  const live = (col, obj) => obj && db()[col].find((x) => x.id === obj.id);
+  const gone = () => { toast('다른 곳에서 삭제된 항목이라 저장하지 못했습니다'); };
 
   const pageHead = (eyebrow, tech, title, actions = '') => `
     <div class="page-head">
@@ -59,7 +62,7 @@ window.Views = window.Views || {};
       onSubmit(d) {
         if (!d.name.trim()) { toast('밴드 이름을 입력하세요'); return false; }
         const patch = { name: d.name.trim(), genre: d.genre.trim(), bio: d.bio.trim(), color: d.color, logo: logoData };
-        if (band) Object.assign(band, patch);
+        if (band) { const cur = live('bands', band); if (!cur) return gone(); Object.assign(cur, patch); }
         else {
           const nb = { id: Store.uid(), ...patch, founded: Store.iso(new Date()), members: [], log: [{ id: Store.uid(), date: Store.iso(new Date()), text: '밴드 결성' }] };
           db().bands.push(nb); db().activeBandId = nb.id;
@@ -246,6 +249,10 @@ window.Views = window.Views || {};
 
   /* ---------------- Candidate songs (Studio) ---------------- */
   let audio = null, playingId = null;
+  // Studio 를 벗어나면 미리듣기 정지
+  window.addEventListener('hashchange', () => {
+    if (audio && !location.hash.startsWith('#/studio')) { audio.pause(); audio = null; playingId = null; }
+  });
   function candidateSection(band) {
     const cands = Store.candidatesOf(band.id)
       .map((s) => ({ s, n: (s.votes || []).filter((v) => band.members.some((m) => m.id === v)).length }))
@@ -371,7 +378,8 @@ window.Views = window.Views || {};
       submit: '추가',
       onSubmit(dt) {
         if (!dt.name.trim()) { toast('이름을 입력하세요'); return false; }
-        band.members.push({ id: Store.uid(), name: dt.name.trim(), instrument: dt.instrument, position: dt.position.trim() || '멤버' });
+        const cur = live('bands', band); if (!cur) return gone();
+        cur.members.push({ id: Store.uid(), name: dt.name.trim(), instrument: dt.instrument, position: dt.position.trim() || '멤버' });
         Store.save(); App.render();
       },
     });
@@ -379,7 +387,8 @@ window.Views = window.Views || {};
       const m = band.members.find((x) => x.id === row.dataset.id);
       row.querySelectorAll('[data-f]').forEach((inp) => inp.onchange = () => { m[inp.dataset.f] = inp.value.trim(); Store.save(); if (inp.dataset.f === 'name') App.render(); });
       row.querySelector('[data-rm]').onclick = () => confirm(`${esc(m.name)} 님을 멤버에서 삭제할까요?`, () => {
-        band.members = band.members.filter((x) => x.id !== m.id);
+        const cur = live('bands', band); if (!cur) return gone();
+        cur.members = cur.members.filter((x) => x.id !== m.id);
         db().tasks = db().tasks.filter((t) => t.memberId !== m.id);
         Store.save(); App.render();
       });
@@ -500,9 +509,18 @@ window.Views = window.Views || {};
         if (sec <= 0) { toast('재생 시간을 m:ss 형식으로 입력하세요'); return false; }
         const patch = { title: dt.title.trim(), artist: dt.artist.trim(), duration: sec, bpm: Math.max(30, Number(dt.bpm) || 120), difficulty: Number(dt.difficulty), mood: dt.mood, artwork, previewUrl };
         if (dt.candidate) Object.assign(patch, { status: 'candidate', proposedBy: dt.proposedBy || '', reason: (dt.reason || '').trim() });
-        else patch.status = undefined;
-        if (song) Object.assign(song, patch);
-        else db().songs.push({ id: Store.uid(), bandId: band.id, progress: 0, votes: [], ...patch });
+        if (song) {
+          const cur = live('songs', song); if (!cur) return gone();
+          const toCand = dt.candidate && cur.status !== 'candidate';
+          Object.assign(cur, patch);
+          if (!patch.status) delete cur.status;
+          if (toCand) {
+            // 후보곡은 세트리스트에 쓸 수 없으므로 들어가 있던 세트리스트에서 뺌
+            let n = 0;
+            db().setlists.forEach((sl) => { const before = sl.items.length; sl.items = sl.items.filter((i) => i.songId !== cur.id); n += before - sl.items.length; });
+            if (n) toast(`후보곡으로 바뀌어 세트리스트 ${n}곳에서 뺐습니다`);
+          }
+        } else db().songs.push({ id: Store.uid(), bandId: band.id, progress: 0, votes: [], ...patch });
         Store.save(); App.render();
         if (dt.candidate && !song) toast('후보곡에 올렸습니다 · Studio에서 투표하세요');
       },
@@ -540,14 +558,14 @@ window.Views = window.Views || {};
       const total = V.setlistTotal(sl), limit = (Number(sl.limit) || 0) * 60;
       const over = limit && total > limit;
       // 제한 시간 넘는 곡 표시
+      // 곡이 지워진 항목은 건너뛰고, 번호·전환 시간도 실제로 남은 곡 기준으로 계산 (setlistTotal 과 같은 규칙)
+      const items = sl.items.map((it) => ({ it, s: Store.song(it.songId) })).filter((x) => x.s).map((x, i) => ({ ...x, i }));
       let acc = 0;
       const cutAt = [];
-      sl.items.forEach((it, i) => {
-        const s = Store.song(it.songId); if (!s) return;
+      items.forEach(({ it, s, i }) => {
         acc += (Number(it.mc) || 0) + s.duration + (i > 0 ? Number(sl.transition) || 0 : 0);
         cutAt[i] = limit && acc > limit;
       });
-      const items = sl.items.map((it, i) => ({ it, s: Store.song(it.songId), i })).filter((x) => x.s);
       setHTML = `
         <div class="row" style="margin-bottom:14px">
           <div class="field" style="flex:2 1 180px;margin:0"><span class="lbl">setlist</span>
@@ -603,7 +621,7 @@ window.Views = window.Views || {};
       onSubmit(dt) {
         if (!dt.name.trim()) { toast('이름을 입력하세요'); return false; }
         const n = { id: Store.uid(), bandId: band.id, name: dt.name.trim(), limit: Number(dt.limit) || 0, transition: Number(dt.transition) || 0, items: [] };
-        d.setlists.push(n); activeSetlistId = n.id; Store.save(); App.render();
+        db().setlists.push(n); activeSetlistId = n.id; Store.save(); App.render();
       },
     });
     el.querySelector('#newSl').onclick = newSl;
@@ -625,7 +643,11 @@ window.Views = window.Views || {};
     el.querySelector('#delSl').onclick = () => confirm(`「${esc(sl.name)}」 세트리스트를 삭제할까요?`, () => { Store.remove('setlists', sl.id); activeSetlistId = null; App.render(); });
     el.querySelector('#renSl').onclick = () => modal({
       title: '이름 변경', body: `<div class="field"><span class="lbl">name</span><input name="name" value="${esc(sl.name)}"></div>`,
-      onSubmit(dt) { if (dt.name.trim()) { sl.name = dt.name.trim(); Store.save(); App.render(); } },
+      onSubmit(dt) {
+        if (!dt.name.trim()) return;
+        const cur = live('setlists', sl); if (!cur) return gone();
+        cur.name = dt.name.trim(); Store.save(); App.render();
+      },
     });
     el.querySelector('#autoFit').onclick = () => {
       const limit = (Number(sl.limit) || 0) * 60;
@@ -757,7 +779,7 @@ window.Views = window.Views || {};
         if (dt.end <= dt.start) { toast('종료 시간이 시작보다 늦어야 합니다'); return false; }
         Object.keys(att).forEach((k) => att[k] === undefined && delete att[k]);
         const patch = { date: dt.date, start: dt.start, end: dt.end, place: dt.place.trim(), notes: dt.notes.trim(), attendance: att };
-        if (reh) Object.assign(reh, patch); else db().rehearsals.push({ id: Store.uid(), bandId: band.id, ...patch });
+        if (reh) { const cur = live('rehearsals', reh); if (!cur) return gone(); Object.assign(cur, patch); } else db().rehearsals.push({ id: Store.uid(), bandId: band.id, ...patch });
         Store.save(); App.render();
       },
     });
@@ -766,7 +788,7 @@ window.Views = window.Views || {};
   function gigForm(band, gig) {
     const g = gig || { date: Store.iso(new Date()), title: '', venue: '', notes: '', photos: [] };
     let photos = [...g.photos];
-    const thumbs = () => photos.map((p, i) => `<div style="position:relative"><img src="${p}" alt=""><button type="button" class="btn icon sm" data-rp="${i}" style="position:absolute;top:2px;right:2px;background:var(--paper)">✕</button></div>`).join('');
+    const thumbs = () => photos.map((p, i) => `<div style="position:relative"><img src="${esc(p)}" alt=""><button type="button" class="btn icon sm" data-rp="${i}" style="position:absolute;top:2px;right:2px;background:var(--paper)">✕</button></div>`).join('');
     modal({
       title: gig ? '공연 기록 수정' : '공연 기록 추가',
       body: `
@@ -790,7 +812,7 @@ window.Views = window.Views || {};
       onSubmit(dt) {
         if (!dt.title.trim()) { toast('공연 이름을 입력하세요'); return false; }
         const patch = { date: dt.date, title: dt.title.trim(), venue: dt.venue.trim(), notes: dt.notes.trim(), photos };
-        if (gig) Object.assign(gig, patch); else db().gigs.push({ id: Store.uid(), bandId: band.id, ...patch });
+        if (gig) { const cur = live('gigs', gig); if (!cur) return gone(); Object.assign(cur, patch); } else db().gigs.push({ id: Store.uid(), bandId: band.id, ...patch });
         Store.save(); App.render();
       },
     });
@@ -854,7 +876,7 @@ window.Views = window.Views || {};
             <span class="lbl">${esc(g.date)} · ${esc(g.venue)}</span>
             <h4>${esc(g.title)}</h4>
             ${g.notes ? `<p>${esc(g.notes)}</p>` : ''}
-            ${g.photos.length ? `<div class="photos">${g.photos.map((p) => `<img src="${p}" alt="">`).join('')}</div>` : ''}
+            ${g.photos.length ? `<div class="photos">${g.photos.map((p) => `<img src="${esc(p)}" alt="">`).join('')}</div>` : ''}
           </div>`).join('') || '<p class="muted">아직 공연 기록이 없습니다.</p>'}</div>
       </section>`;
 
@@ -880,6 +902,7 @@ window.Views = window.Views || {};
     };
     if (window.FullCalendar) {
       const initialDate = calendar ? calendar.getDate() : undefined;
+      if (calendar) { try { calendar.destroy(); } catch (e) { /* 이미 DOM에서 빠짐 */ } calendar = null; } // 리스너 누수 방지
       calendar = new FullCalendar.Calendar(calEl, {
         initialView: calView, initialDate, locale: 'ko', height: 'auto', firstDay: 1,
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'timeGridWeek,dayGridMonth,listMonth' },
@@ -972,7 +995,7 @@ window.Views = window.Views || {};
       submit: '추가',
       onSubmit(dt) {
         if (!dt.text.trim() || !dt.memberId) { toast('과제 내용을 입력하세요'); return false; }
-        d.tasks.push({ id: Store.uid(), bandId: band.id, memberId: dt.memberId, songId: dt.songId || null, text: dt.text.trim(), done: false });
+        db().tasks.push({ id: Store.uid(), bandId: band.id, memberId: dt.memberId, songId: dt.songId || null, text: dt.text.trim(), done: false });
         Store.save(); App.render();
       },
     });
