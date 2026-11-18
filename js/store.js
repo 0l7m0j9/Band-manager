@@ -128,44 +128,242 @@ const Store = (() => {
     };
   }
 
-  /* ---------- persistence ---------- */
-  function load() {
-    try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) { db = null; }
-    if (!db || db.version !== 1) db = seed();
+  /* ---------- persistence ----------
+     로그아웃 상태: KEY(이 브라우저 전용 데이터)
+     로그인 상태  : KEY.ws.<workspace> 에 캐시 + Supabase 의 app_state 와 동기화 */
+  const cacheKey = () => (profile ? `${KEY}.ws.${profile.workspace_id}` : KEY);
+  function readLocal(k) {
+    try { const v = JSON.parse(localStorage.getItem(k)); return v && v.version === 1 ? v : null; } catch (e) { return null; }
+  }
+  function load() { db = readLocal(KEY) || seed(); }
+  function writeLocal() {
+    try { localStorage.setItem(cacheKey(), JSON.stringify(db)); }
+    catch (e) { window.UI && UI.toast('브라우저 저장 공간이 부족합니다 (사진 용량을 줄여주세요)'); }
   }
   function persist() {
-    try { localStorage.setItem(KEY, JSON.stringify(db)); }
-    catch (e) { window.UI && UI.toast('브라우저 저장 공간이 부족합니다 (사진 용량을 줄여주세요)'); }
-    if (sb) { clearTimeout(syncTimer); syncTimer = setTimeout(pushRemote, 800); }
+    writeLocal();
+    if (sb && profile) { clearTimeout(syncTimer); syncTimer = setTimeout(pushRemote, 800); }
     listeners.forEach((fn) => fn());
   }
 
-  /* ---------- Supabase (optional) ---------- */
+  /* ---------- Supabase: 회원 · 친구 공유 ---------- */
+  const clientId = uid() + uid();
+  let user = null, profile = null, wsChannel = null, reqChannel = null, pushing = null;
+  let authListeners = [], remoteListeners = [];
+  const emitAuth = () => authListeners.forEach((fn) => fn());
+  const emitRemote = () => { remoteListeners.forEach((fn) => fn()); listeners.forEach((fn) => fn()); };
+  const configured = () => { const c = window.BM_CONFIG || {}; return !!(c.SUPABASE_URL && c.SUPABASE_ANON_KEY); };
+
   async function initRemote() {
-    const c = window.BM_CONFIG || {};
-    if (!c.SUPABASE_URL || !c.SUPABASE_ANON_KEY) return false;
+    if (!configured()) return false;
+    const c = window.BM_CONFIG;
     await new Promise((res, rej) => {
       const s = document.createElement('script');
       s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
       s.onload = res; s.onerror = rej; document.head.appendChild(s);
     });
     sb = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY);
-    const { data, error } = await sb.from('app_state').select('data').eq('id', c.WORKSPACE_ID).maybeSingle();
-    if (error) { console.warn(error); return false; }
-    if (data && data.data && data.data.version === 1) {
-      db = data.data;
-      localStorage.setItem(KEY, JSON.stringify(db));
-    } else {
-      await pushRemote();
-    }
+    const { data } = await sb.auth.getSession();
+    if (data.session) await attach(data.session.user);
+    sb.auth.onAuthStateChange((event, session) => {
+      // 콜백 안에서 바로 supabase 호출을 하면 잠김이 생길 수 있어 다음 틱으로 미룸
+      setTimeout(async () => {
+        if (event === 'SIGNED_OUT') detach();
+        else if (session && (!user || user.id !== session.user.id)) await attach(session.user);
+      }, 0);
+    });
+    emitAuth();
     return true;
   }
-  async function pushRemote() {
-    if (!sb) return;
-    const c = window.BM_CONFIG;
-    const { error } = await sb.from('app_state').upsert({ id: c.WORKSPACE_ID, data: db, updated_at: new Date().toISOString() });
-    if (error) console.warn('Supabase sync failed', error);
+
+  /** 로그인한 회원의 workspace 데이터를 불러오고 실시간 구독 */
+  async function attach(u) {
+    user = u;
+    const { data: prof, error } = await sb.from('profiles').select('*').eq('id', u.id).maybeSingle();
+    if (error || !prof) {
+      console.warn('profile not found', error);
+      if (window.UI) UI.toast('프로필을 불러오지 못했습니다. supabase/schema.sql 을 실행했는지 확인하세요');
+      user = null; emitAuth(); return;
+    }
+    const guestData = profile ? null : db; // 처음 로그인할 때 이 브라우저 데이터를 새 계정의 시작 데이터로 사용
+    profile = prof;
+    const { data: row, error: e2 } = await sb.from('app_state').select('data').eq('id', prof.workspace_id).maybeSingle();
+    if (e2) {
+      // 서버 데이터를 못 읽었을 때는 덮어쓰지 않고 캐시로 보여주기만 함
+      console.warn(e2);
+      db = readLocal(cacheKey()) || guestData || db;
+      if (window.UI) UI.toast('서버 데이터를 불러오지 못했습니다');
+    } else if (row && row.data && row.data.version === 1) db = row.data;
+    else { db = readLocal(cacheKey()) || guestData || readLocal(KEY) || seed(); await pushRemote(); }
+    writeLocal();
+    subscribe();
+    emitAuth(); emitRemote();
   }
+
+  function detach() {
+    clearTimeout(syncTimer); syncTimer = null;
+    if (wsChannel) { sb.removeChannel(wsChannel); wsChannel = null; }
+    if (reqChannel) { sb.removeChannel(reqChannel); reqChannel = null; }
+    user = null; profile = null;
+    friendCache = { friends: [], requests: [] };
+    db = readLocal(KEY) || seed();
+    emitAuth(); emitRemote();
+  }
+
+  function subscribe() {
+    if (wsChannel) sb.removeChannel(wsChannel);
+    if (reqChannel) sb.removeChannel(reqChannel);
+    const ws = profile.workspace_id;
+    wsChannel = sb.channel('ws-' + ws)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: `id=eq.${ws}` }, (p) => {
+        if (p.new && p.new.client_id === clientId) return; // 내가 저장한 것
+        pullRemote();
+      })
+      .subscribe();
+    reqChannel = sb.channel('req-' + user.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `to_user=eq.${user.id}` }, () => refreshFriends())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `from_user=eq.${user.id}` }, () => refreshFriends())
+      // 내 그룹이 다른 그룹에 합쳐지면 내 workspace_id 가 바뀜
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` }, (p) => {
+        if (p.new && profile && p.new.workspace_id !== profile.workspace_id) reattach();
+      })
+      .subscribe();
+  }
+
+  /** 친구가 바꾼 데이터 가져오기 (내가 저장 대기 중이면 내 변경을 우선) */
+  async function pullRemote() {
+    if (!profile || syncTimer) return;
+    // 친구가 나를 다른 workspace 로 옮겼을 수 있으니 프로필도 확인
+    const { data: prof } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (prof && prof.workspace_id !== profile.workspace_id) { profile = null; return attach(user); }
+    const { data: row } = await sb.from('app_state').select('data').eq('id', profile.workspace_id).maybeSingle();
+    if (syncTimer || !row || !row.data || row.data.version !== 1) return;
+    db = row.data; writeLocal(); emitRemote();
+  }
+
+  async function pushRemote() {
+    syncTimer = null;
+    if (!sb || !profile) return;
+    pushing = sb.from('app_state').upsert({ id: profile.workspace_id, data: db, updated_at: new Date().toISOString(), client_id: clientId });
+    const { error } = await pushing;
+    pushing = null;
+    if (error) { console.warn('Supabase sync failed', error); window.UI && UI.toast('서버 저장 실패 — 잠시 후 다시 시도합니다'); }
+  }
+  /** 대기 중인 저장을 즉시 보냄 */
+  async function flush() {
+    if (syncTimer) { clearTimeout(syncTimer); await pushRemote(); }
+    else if (pushing) await pushing;
+  }
+
+  /* 로그인은 아이디로 합니다. Supabase Auth 가 이메일 형식을 요구하므로
+     내부적으로만 "아이디@LOGIN_DOMAIN" 으로 바꿔 넘기고, 메일은 쓰지 않습니다. */
+  const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+  const normId = (v) => String(v || '').trim().toLowerCase();
+  const toLogin = (id) => `${id}@${(window.BM_CONFIG && window.BM_CONFIG.LOGIN_DOMAIN) || 'bandmanager.app'}`;
+  const checkId = (id) => { if (!USERNAME_RE.test(id)) throw new Error('아이디는 영문 소문자·숫자·_ 3~20자로 입력하세요'); };
+
+  const authErr = (e) => {
+    const m = (e && e.message) || String(e);
+    if (/Invalid login credentials/i.test(m)) return '아이디 또는 비밀번호가 올바르지 않습니다';
+    if (/not confirmed/i.test(m)) return '가입 승인이 필요한 상태입니다. Supabase에서 Confirm email 설정을 꺼주세요';
+    if (/already registered|already exists/i.test(m)) return '이미 사용 중인 아이디입니다';
+    if (/Password should be|weak/i.test(m)) return '비밀번호는 6자 이상이어야 합니다';
+    if (/rate limit/i.test(m)) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요';
+    if (/email/i.test(m)) return '가입할 수 없는 아이디입니다 (' + m + ')';
+    return m;
+  };
+  const rpcErr = (e) => ((e && e.message) || String(e)).replace(/^.*?ERROR:\s*/, '');
+
+  const Auth = {
+    get configured() { return configured(); },
+    get ready() { return !!sb; },
+    get user() { return user; },
+    get profile() { return profile; },
+    onChange(fn) { authListeners.push(fn); },
+    USERNAME_RE,
+    async signUp(username, password, nickname) {
+      const id = normId(username); checkId(id);
+      const { data, error } = await sb.auth.signUp({ email: toLogin(id), password, options: { data: { username: id, nickname } } });
+      if (error) throw new Error(authErr(error));
+      // 이미 있는 아이디면 Supabase 가 오류 대신 빈 identities 를 돌려줌
+      if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) throw new Error('이미 사용 중인 아이디입니다');
+      if (!data.session) throw new Error('가입은 됐지만 바로 로그인할 수 없습니다. Supabase에서 Confirm email 설정을 꺼주세요');
+      await attach(data.session.user);
+    },
+    async signIn(username, password) {
+      const id = normId(username);
+      if (!id) throw new Error('아이디를 입력하세요');
+      const { data, error } = await sb.auth.signInWithPassword({ email: toLogin(id), password });
+      if (error) throw new Error(authErr(error));
+      if (!user || user.id !== data.user.id) await attach(data.user);
+    },
+    async signOut() {
+      await flush();
+      await sb.auth.signOut();
+      detach();
+    },
+    async setNickname(nickname) {
+      const { error } = await sb.from('profiles').update({ nickname }).eq('id', user.id);
+      if (error) throw new Error(rpcErr(error));
+      profile.nickname = nickname; emitAuth();
+    },
+  };
+
+  /* ---------- 친구 ---------- */
+  let friendCache = { friends: [], requests: [] };
+  let friendListeners = [];
+  async function refreshFriends() {
+    if (!profile) { friendCache = { friends: [], requests: [] }; return friendCache; }
+    const [f, r] = await Promise.all([
+      sb.from('profiles').select('id,username,nickname').eq('workspace_id', profile.workspace_id).neq('id', user.id).order('nickname'),
+      sb.rpc('list_friend_requests'),
+    ]);
+    if (f.error) console.warn(f.error);
+    if (r.error) console.warn(r.error);
+    const next = { friends: f.data || [], requests: r.data || [] };
+    const changed = JSON.stringify(next) !== JSON.stringify(friendCache);
+    friendCache = next;
+    if (changed) friendListeners.forEach((fn) => fn(friendCache)); // 바뀐 경우만 알림 (화면 무한 갱신 방지)
+    return friendCache;
+  }
+  /** 친구 관계가 바뀌어 workspace 가 달라졌을 수 있으므로 다시 붙음 */
+  async function reattach() {
+    const { data: prof } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (prof && prof.workspace_id !== profile.workspace_id) { profile = null; await attach(user); }
+    else await pullRemote();
+    await refreshFriends();
+  }
+  const Friends = {
+    get cache() { return friendCache; },
+    onChange(fn) { friendListeners.push(fn); },
+    refresh: refreshFriends,
+    async request(username) {
+      const id = normId(username);
+      if (!id) throw new Error('친구 아이디를 입력하세요');
+      await flush();
+      const { data, error } = await sb.rpc('send_friend_request', { target_username: id });
+      if (error) throw new Error(rpcErr(error));
+      if (data === 'accepted') await reattach(); else await refreshFriends();
+      return data;
+    },
+    async respond(id, accept) {
+      await flush();
+      const { error } = await sb.rpc('respond_friend_request', { req_id: id, accept });
+      if (error) throw new Error(rpcErr(error));
+      if (accept) await reattach(); else await refreshFriends();
+    },
+    async cancel(id) {
+      const { error } = await sb.rpc('cancel_friend_request', { req_id: id });
+      if (error) throw new Error(rpcErr(error));
+      await refreshFriends();
+    },
+    async leave() {
+      await flush();
+      const { error } = await sb.rpc('leave_shared_workspace');
+      if (error) throw new Error(rpcErr(error));
+      await reattach();
+    },
+  };
 
   load();
 
@@ -174,8 +372,11 @@ const Store = (() => {
     get db() { return db; },
     save: persist,
     onChange(fn) { listeners.push(fn); },
+    /** 친구 변경 등 서버에서 데이터가 새로 들어왔을 때 */
+    onRemote(fn) { remoteListeners.push(fn); },
     reset() { db = seed(); persist(); },
     initRemote,
+    Auth, Friends,
 
     // helpers
     band(id = db.activeBandId) { return db.bands.find((b) => b.id === id) || db.bands[0] || null; },

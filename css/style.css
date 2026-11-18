@@ -125,6 +125,43 @@ p { margin: 0; }
   max-width: 200px;
 }
 
+.top-right { display: flex; align-items: center; gap: 12px; }
+.account-btn {
+  position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0;
+  text-decoration: none;
+  border: 1px solid var(--ink); border-radius: 999px;
+  padding: 3px 14px 4px;
+  line-height: 1.25;
+  max-width: 160px;
+}
+.account-btn[hidden] { display: none; }
+.account-btn b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.account-btn .lbl { font-size: 9px; opacity: .75; }
+.account-btn:hover { background: var(--ink); color: var(--lime); }
+.account-btn .badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--violet); color: var(--white);
+  font: 700 11px/18px var(--f-mono); font-style: normal; text-align: center;
+}
+
+.auth-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.friend-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--line-soft);
+}
+.friend-name { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.friend-name b, .friend-name .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-name .mono { font-size: 12px; }
+@media (max-width: 560px) {
+  .top-right { gap: 8px; }
+  .band-switch .lbl { display: none; }
+  .band-switch select { max-width: 120px; }
+  .account-btn { padding: 3px 10px 4px; }
+  .account-btn b { max-width: 72px; }
+}
+
 @media (max-width: 1100px) {
   .top { grid-template-columns: 1fr auto; }
   .nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--gutter) * -1); padding: 0 var(--gutter); }

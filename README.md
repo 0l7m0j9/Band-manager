@@ -27,6 +27,7 @@
 | Festival | `#/festivals` | 페스티벌 목록과 생성 |
 | Timetable | `#/timetable` | 현재 페스티벌의 무대별 시간표 |
 | Personal | `#/personal` | 관객 입장의 개인 관람 시간표 |
+| Account | `#/account` | 로그인·회원가입, 친구 추가·요청 수락, 공유 그만두기 |
 
 페스티벌 상세는 `#/festival/:id/(overview|lineup|timetable|poster|stage)` 탭으로 나뉩니다. `:id` 자리에 `active`를 쓰면 현재 선택된 페스티벌이 열립니다.
 
@@ -163,7 +164,7 @@ Studio의 **+ 곡 추가 / + 후보곡**, Setlist의 **+ 곡 등록**에서 같�
 - **Visualization**: CSS Grid (공연 흐름, 타임테이블)
 - **Poster / 시간표 이미지**: HTML Canvas
 - **곡 검색**: iTunes Search API (키 불필요, JSONP 호출)
-- **Backend (선택)**: Supabase
+- **Backend (선택)**: Supabase — Auth(아이디 로그인), Postgres + RLS, Realtime(친구 간 실시간 반영)
 
 ## 파일 구조
 ```
@@ -174,8 +175,9 @@ js/store.js             데이터 저장소, 예시 데이터, Supabase 동기�
 js/ui.js                모달, 토스트, 시간 포맷, 이미지 리사이즈, 공유
 js/views-band.js        Home · My Bands · Studio(곡/후보곡) · Setlist · Rehearsal · Progress · iTunes 검색
 js/views-festival.js    Festival · Lineup · Timetable · Poster · Stage Designer · Personal
-js/app.js               해시 라우터, 헤더·티커 갱신
-supabase/schema.sql     Supabase 테이블 생성 SQL
+js/views-account.js     로그인·회원가입 창, 계정·친구 화면(#/account)
+js/app.js               해시 라우터, 헤더·티커·계정 버튼 갱신
+supabase/schema.sql     Supabase 테이블·보안 정책·친구 함수 SQL
 ```
 
 ## 데이터 구조 (요약)
@@ -189,12 +191,30 @@ supabase/schema.sql     Supabase 테이블 생성 SQL
 | gig | bandId, date, title, venue, notes, photos[] |
 | festival | name, startDate, days, venue, theme, bg, accent, dayStart, dayEnd, changeover, stages[], acts[], slots[{actId, stageId, day, start(분), dur, changeover}], favorites[], layouts{} |
 
-## Supabase 연결
-1. Supabase 프로젝트의 SQL Editor에서 `supabase/schema.sql`을 실행합니다.
-2. `js/config.js`에 `SUPABASE_URL`, `SUPABASE_ANON_KEY`를 입력합니다.
-3. 새로고침하면 전체 데이터가 `app_state` 테이블과 자동 동기화됩니다. 같은 `WORKSPACE_ID`를 쓰는 브라우저끼리 데이터를 공유합니다.
+## Supabase 연결 · 회원 · 친구 공유
+1. Supabase 프로젝트의 SQL Editor에서 `supabase/schema.sql`을 실행합니다(여러 번 실행해도 안전).
+2. `js/config.js`에 `SUPABASE_URL`, `SUPABASE_ANON_KEY`(publishable key)를 입력합니다.
+3. **(필수)** Authentication → Sign In / Providers → Email 에서 **Confirm email**을 끕니다. 앱은 메일을 쓰지 않으므로 이 설정이 켜져 있으면 가입 후 로그인할 수 없습니다.
 
-> 주의: 현재 정책은 키를 아는 누구나 읽고 쓸 수 있는 **데모용**입니다. 실제 서비스로 쓰려면 Supabase Auth로 로그인을 붙이고 `auth.uid()` 기반 정책으로 바꿔야 합니다. Supabase 연결은 코드만 준비되어 있고 실제 프로젝트에 연결해 시험하지는 않았습니다.
+### 회원가입 · 로그인
+- 오른쪽 위 **로그인** 버튼(`#/account`) → **아이디**(영문 소문자·숫자·_ 3~20자)·비밀번호(6자 이상)·닉네임으로 가입합니다. 이메일은 필요 없습니다.
+- Supabase Auth가 이메일 형식을 요구하므로 내부적으로만 `아이디@bandmanager.app`(`js/config.js`의 `LOGIN_DOMAIN`)으로 저장합니다. 메일은 보내지 않으며, 비밀번호 찾기 기능은 없습니다.
+- 로그인하지 않으면 지금처럼 이 브라우저에만 저장됩니다.
+- 처음 가입·로그인하면 **이 브라우저에 있던 데이터가 내 계정의 시작 데이터**가 됩니다. 이후에는 어느 기기에서 로그인해도 같은 데이터가 보입니다.
+- 로그아웃하면 브라우저 전용 데이터로 돌아갑니다.
+
+### 친구 추가 — 하나의 계정처럼 공유
+- 계정 화면에서 친구의 **아이디로 친구 요청**을 보냅니다. 상대가 **수락**하면 두 사람의 데이터가 하나로 합쳐지고, 이후 밴드·곡·세트리스트·합주·페스티벌 등 **모든 데이터를 함께 보고 수정**합니다.
+- 친구가 바꾼 내용은 실시간으로 내 화면에 반영됩니다.
+- 친구 관계는 그룹으로 묶입니다. A–B가 친구이고 C가 B의 요청을 수락하면 A·B·C가 모두 같은 데이터를 씁니다.
+- 서로 동시에 요청을 보내면 바로 친구가 됩니다.
+- **공유 그만두기**: 지금 데이터의 복사본을 가지고 나만의 데이터로 분리됩니다. 남은 친구들은 기존 데이터를 계속 씁니다.
+- 헤더의 계정 버튼에 친구 수와 받은 요청 수(보라색 숫자)가 표시됩니다.
+
+> 참고
+> - 데이터는 그룹마다 JSON 한 덩어리로 저장되므로, 두 사람이 **같은 순간에** 수정하면 나중에 저장된 쪽이 남습니다.
+> - 친구가 되며 데이터를 합칠 때 두 사람 모두 예시 데이터를 가지고 있었다면 예시 밴드가 두 개씩 보일 수 있습니다. 필요 없는 쪽을 삭제하세요.
+> - 보안: 데이터는 Row Level Security로 **같은 그룹 회원만** 읽고 쓸 수 있습니다. 친구 요청·수락·탈퇴는 서버 함수(RPC)로만 처리됩니다.
 
 ## 알려진 한계
 - 데이터가 브라우저에 저장되므로 사진을 많이 올리면 저장 공간(약 5MB)이 부족할 수 있습니다. 사진은 자동으로 줄여 저장합니다.

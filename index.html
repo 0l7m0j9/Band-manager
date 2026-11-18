@@ -45,17 +45,20 @@
       <a href="#/timetable" data-r="timetable">Timetable</a>
       <a href="#/personal" data-r="personal">Personal</a>
     </nav>
-    <label class="band-switch">
-      <span class="lbl">active band</span>
-      <select id="activeBand"></select>
-    </label>
+    <div class="top-right">
+      <label class="band-switch">
+        <span class="lbl">active band</span>
+        <select id="activeBand"></select>
+      </label>
+      <a href="#/account" class="account-btn" id="accountBtn" hidden></a>
+    </div>
   </header>
 
   <main id="view" class="view"></main>
 
   <footer class="foot">
     <span class="lbl">a project by</span> <b class="tech">BAND MANAGER</b>
-    <span class="lbl right">data saved in this browser · <a href="#" id="resetData">reset demo</a></span>
+    <span class="lbl right"><span id="saveInfo">data saved in this browser</span> · <a href="#" id="resetData">reset demo</a></span>
   </footer>
 
   <div id="modal-root"></div>
@@ -67,6 +70,7 @@
   <script src="js/ui.js"></script>
   <script src="js/views-band.js"></script>
   <script src="js/views-festival.js"></script>
+  <script src="js/views-account.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
