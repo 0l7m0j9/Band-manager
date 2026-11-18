@@ -118,7 +118,7 @@
       <div class="page-head">
         <div>
           <div class="eyebrow"><span class="lbl">${dateEn(f.startDate)}${f.days > 1 ? ' – ' + dateEn(addDays(f.startDate, f.days - 1)) : ''}</span><span class="lbl">${esc(f.venue)}</span></div>
-          <h1 class="page-title"><span class="tech">FESTIVAL</span><span class="wave" style="font-size:1.25em;line-height:.8;display:inline-block;color:${esc(f.accent)}">${esc(f.name)}</span></h1>
+          <h1 class="page-title"><span class="tech">FESTIVAL</span>${esc(f.name)}</h1>
         </div>
         <div class="page-actions"><a class="btn" href="#/personal">Personal →</a><a class="btn ghost" href="#/festivals">All festivals</a></div>
       </div>

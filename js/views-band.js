@@ -112,16 +112,16 @@ window.Views = window.Views || {};
       </div>
       <div class="grid-3" style="margin:28px 0 40px">
         <a class="panel paper" href="#/rehearsal" style="text-decoration:none">
-          <span class="lbl">next rehearsal</span>
+          <span class="lbl muted">next rehearsal</span>
           ${nextReh ? `<h3 style="font-size:30px;margin:8px 0 4px">${dateKo(nextReh.date)}</h3><p>${esc(nextReh.start)}–${esc(nextReh.end)} · ${esc(nextReh.place)}</p>` : '<h3 style="font-size:24px;margin-top:8px">예정된 합주 없음</h3>'}
         </a>
         <a class="panel ink" href="#/setlist" style="text-decoration:none">
           <span class="lbl" style="color:var(--lime)">latest setlist</span>
           ${sl ? `<h3 style="font-size:30px;margin:8px 0 4px">${esc(sl.name)}</h3><p>${sl.items.length}곡 · ${dur(V.setlistTotal(sl))}</p>` : '<h3 style="font-size:24px;margin-top:8px">세트리스트를 만들어보세요</h3>'}
         </a>
-        <a class="panel" href="#/timetable" style="text-decoration:none;background:var(--violet);color:var(--white)">
-          <span class="lbl">festival</span>
-          ${fest ? `<h3 class="wave-sm" style="font-size:46px;color:var(--white);margin:4px 0">${esc(fest.name)}</h3><p>${fest.stages.length} stages · ${fest.acts.length} acts</p>` : '<h3 style="font-size:24px;margin-top:8px">페스티벌 만들기</h3>'}
+        <a class="panel" href="#/timetable" style="text-decoration:none">
+          <span class="lbl muted">festival</span>
+          ${fest ? `<h3 style="font-size:30px;margin:8px 0 4px">${esc(fest.name)}</h3><p>${fest.stages.length} stages · ${fest.acts.length} acts</p>` : '<h3 style="font-size:24px;margin-top:8px">페스티벌 만들기</h3>'}
         </a>
       </div>
       <ul class="module-list">
@@ -857,7 +857,7 @@ window.Views = window.Views || {};
       <div class="split split-cal">
         <section class="section">
           <div class="cal-wrap"><div id="cal"></div></div>
-          <p class="cal-hint">주간 보기에서 <b>시간대를 끌어서 선택</b>하면 그 시간으로 합주가 등록돼요 · 일정 블록을 <b>끌어서 날짜·시간 이동</b>, 아래 끝을 끌어서 길이 조절 · 클릭하면 수정 · <span style="background:var(--violet);color:#fff;padding:0 4px">보라</span> = 공연</p>
+          <p class="cal-hint">주간 보기에서 <b>시간대를 끌어서 선택</b>하면 그 시간으로 합주가 등록돼요 · 일정 블록을 <b>끌어서 날짜·시간 이동</b>, 아래 끝을 끌어서 길이 조절 · 클릭하면 수정 · <span class="gig-key">흰 블록</span> = 공연</p>
         </section>
         <section>
           <div class="section">
