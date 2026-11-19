@@ -432,17 +432,18 @@ const Store = (() => {
     emitAuth();
     return true;
   }
+  let loadError = '';
   async function attach(u) {
-    user = u;
+    user = u; loadError = '';
     try {
       await loadProfile();
-      if (!profile) throw new Error('프로필이 없습니다. supabase/schema.sql 을 실행했는지 확인하세요');
+      if (!profile) throw new Error('프로필이 없습니다');
       docs.clear(); db = emptyDb();
       await loadGroup();
       subscribe();
     } catch (e) {
       console.warn(e);
-      note('불러오기 실패: ' + errMsg(e));
+      loadError = errMsg(e); // 화면에 원인과 다시 시도 버튼을 보여줌 (불러오는 중에 멈추지 않게)
     }
     emitAuth(); emitRemote();
   }
@@ -473,6 +474,9 @@ const Store = (() => {
     get ready() { return !!sb; },
     get failed() { return remoteFailed; },
     get restoring() { return false; },
+    /** 로그인 후 불러오기 실패 원인 (없으면 '') */
+    get loadError() { return loadError; },
+    async retry() { if (user) await attach(user); },
     get user() { return user; },
     get profile() { return profile ? { ...profile, phone: myPhone, name: profile.full_name || profile.nickname || profile.username } : null; },
     /** 가입 정보(이름·그룹)가 아직 없음 → 정보 입력 화면 */

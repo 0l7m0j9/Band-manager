@@ -97,6 +97,17 @@ const App = (() => {
     try {
       if (!A.configured) { shell(''); view.innerHTML = UI.empty('Setup', 'js/config.js 에 Supabase 설정이 필요합니다.'); return; }
       if (!A.user) { shell(''); V.landing(view); return; }
+      if (A.loadError) {
+        shell('');
+        const schemaHint = /column|relation|does not exist|function|schema cache|프로필이 없습니다/i.test(A.loadError);
+        view.innerHTML = UI.empty('Error', `데이터를 불러오지 못했습니다.<br><code style="font-size:12px">${UI.esc(A.loadError)}</code>` +
+          (schemaHint ? '<br><br>Supabase SQL Editor에서 <b>supabase/schema.sql</b> 전체를 실행했는지 확인하세요.' : ''),
+          '<button class="btn solid" id="retry">다시 시도</button> <button class="btn" id="lo">로그아웃</button>');
+        view.querySelector('#retry').onclick = async (e) => { e.target.disabled = true; await A.retry(); };
+        view.querySelector('#lo').onclick = () => A.signOut();
+        return;
+      }
+      if (!A.profile) { shell(''); view.innerHTML = UI.empty('Loading', '불러오는 중…'); return; }
       if (A.needsOnboarding) { shell(''); V.welcome(view); return; }
       if (!G.current) { shell(''); view.innerHTML = UI.empty('Loading', '불러오는 중…'); return; }
       const role = G.role;
