@@ -92,6 +92,98 @@ const Poster = (() => {
     }, f);
   }
 
+  /* ---------- 분위기 시안 (AI 없이, 무료) ----------
+     분위기 문장·페스티벌 테마·장르에서 단어를 찾아 어울리는 스타일을 고르고,
+     레이아웃이 서로 다른 시안 3개를 만듭니다. */
+  const STYLES = [
+    { key: 'retro', label: '레트로', words: ['레트로', '복고', '빈티지', '옛날', '70년대', '80년대', '90년대', '70s', '80s', '90s', '디스코', '시티팝', 'retro', 'vintage', 'disco', 'citypop'],
+      palettes: [['#f6e7cb', '#3a2e39', '#d1495b', '#00798c'], ['#ffd23f', '#2b1d0e', '#ee4266', '#3bceac'], ['#f4a259', '#2d1e2f', '#5b8e7d', '#f4e285'], ['#2d1e2f', '#f6e7cb', '#f4a259', '#bc4b51']],
+      layouts: ['orbit', 'sunburst', 'stack', 'ripple'], patterns: ['rays', 'stripes', 'dots', 'rings'], fonts: ['wave', 'grotesk'], grain: 'heavy',
+      kickers: ['RETRO SOUND NIGHT', 'BACK TO THE 90S', 'VINTAGE LIVE'], why: '바랜 듯한 따뜻한 색과 굵은 질감' },
+    { key: 'neon', label: '네온 · 사이버', words: ['네온', '사이버', '클럽', '일렉', '전자', '테크노', '미래', '디지털', '레이브', 'edm', 'neon', 'cyber', 'club', 'techno', 'electronic', 'rave', 'future'],
+      palettes: [['#0b0b1a', '#f2f2ff', '#ff2bd6', '#2bf5ff'], ['#0d0221', '#f8f9fa', '#39ff14', '#ff2079'], ['#101820', '#f2f2f2', '#00e5ff', '#ffe600'], ['#1a0b2e', '#f6f0ff', '#b8ff00', '#7b2cff']],
+      layouts: ['split', 'grid', 'orbit', 'stack'], patterns: ['grid', 'dots', 'rings', 'stripes'], fonts: ['tech', 'mono'], grain: 'light',
+      kickers: ['AFTER DARK', 'LIVE · ELECTRIC', 'NIGHT SIGNAL'], why: '어두운 바탕에 빛나는 형광색' },
+    { key: 'dreamy', label: '몽환', words: ['몽환', '꿈', '우주', '새벽', '별빛', '밤하늘', '달빛', '은하', '신비', '슈게이징', '드림', 'dream', 'dreamy', 'space', 'shoegaze', 'ambient', 'galaxy', 'moon'],
+      palettes: [['#1d1a3a', '#f3eefe', '#b79cff', '#6fd3ff'], ['#e8e1ff', '#221a3b', '#7f5cff', '#ff9ecd'], ['#0f1d3a', '#eef3ff', '#9ad1ff', '#d4a5ff'], ['#ffe9f3', '#2a1b3d', '#a06cd5', '#6fd3ff']],
+      layouts: ['ripple', 'orbit', 'sunburst', 'split'], patterns: ['waves', 'rings', 'blobs'], fonts: ['wave', 'tech'], grain: 'light',
+      kickers: ['A NIGHT OF DREAMS', 'MUSIC FROM ORBIT', 'MIDNIGHT SOUND'], why: '보랏빛·하늘빛 그라데이션과 물결' },
+    { key: 'punk', label: '펑크 · 락', words: ['펑크', '락', '록밴드', '록 ', '하드', '강렬', '거친', '메탈', '그런지', '시끄러운', '파워', 'punk', 'rock', 'metal', 'grunge', 'loud', 'hardcore'],
+      palettes: [['#141210', '#fff6ec', '#ff2e2e', '#ffe600'], ['#ffe600', '#141210', '#ff2e2e', '#141210'], ['#e10600', '#fff6ec', '#141210', '#ffe600'], ['#f2f2f2', '#141210', '#e10600', '#141210']],
+      layouts: ['grid', 'stack', 'split', 'orbit'], patterns: ['stripes', 'none', 'dots', 'grid'], fonts: ['grotesk', 'mono'], grain: 'heavy',
+      kickers: ['LOUD & LIVE', 'TURN IT UP', 'NO SLEEP TILL SHOWTIME'], why: '검정·빨강·노랑의 강한 대비와 굵은 글자' },
+    { key: 'summer', label: '여름 · 야외', words: ['여름', '바다', '해변', '강변', '피크닉', '야외', '햇살', '태양', '청량', '휴가', 'summer', 'beach', 'picnic', 'outdoor', 'sunny', 'sun'],
+      palettes: [['#ffd23f', '#141210', '#f2541b', '#ff9f1c'], ['#5bc0eb', '#0b2545', '#ffd23f', '#fde74c'], ['#fff6e0', '#1b3a4b', '#ff6b35', '#2ec4b6'], ['#2ec4b6', '#0b2545', '#ffd23f', '#ff6b6b']],
+      layouts: ['sunburst', 'ripple', 'orbit', 'grid'], patterns: ['rays', 'waves', 'blobs'], fonts: ['wave', 'grotesk'], grain: 'light',
+      kickers: ['SUMMER SOUND FESTIVAL', 'OPEN AIR LIVE', 'SUN · SOUND · SEA'], why: '햇살과 물빛의 밝고 청량한 색' },
+    { key: 'minimal', label: '미니멀', words: ['미니멀', '깔끔', '심플', '모던', '흑백', '세련', '단정', 'minimal', 'clean', 'simple', 'modern', 'mono', 'black'],
+      palettes: [['#f6f4ef', '#141210', '#141210', '#bdb7ab'], ['#141210', '#f6f4ef', '#f6f4ef', '#5a554d'], ['#ffffff', '#111111', '#e10600', '#cccccc'], ['#e9e6df', '#141210', '#2b59c3', '#a8a39a']],
+      layouts: ['stack', 'split', 'grid'], patterns: ['none', 'grid', 'none'], fonts: ['grotesk', 'mono', 'tech'], grain: 'none',
+      kickers: ['LIVE MUSIC', 'CONCERT', 'SOUND / SPACE'], why: '여백과 타이포그래피만으로 정리' },
+    { key: 'warm', label: '따뜻 · 어쿠스틱', words: ['따뜻', '어쿠스틱', '감성', '잔잔', '포근', '가을', '포크', '인디', '숲', 'acoustic', 'folk', 'indie', 'warm', 'autumn', 'cozy'],
+      palettes: [['#f3e9dc', '#3e2c23', '#c06c3e', '#7a9e7e'], ['#3e2c23', '#f3e9dc', '#e0a458', '#7a9e7e'], ['#e9f5db', '#1b4332', '#ff6b35', '#52b788'], ['#f6e7cb', '#4a3728', '#a4573a', '#d9b26f']],
+      layouts: ['ripple', 'stack', 'orbit', 'sunburst'], patterns: ['waves', 'blobs', 'none'], fonts: ['wave', 'grotesk'], grain: 'heavy',
+      kickers: ['ACOUSTIC EVENING', 'SLOW & WARM', 'INDIE SESSION'], why: '흙빛·나뭇잎색의 차분한 색감' },
+    { key: 'winter', label: '겨울 · 연말', words: ['겨울', '눈송이', '눈 내리는', '크리스마스', '연말', '송년', '캐롤', '새해', 'winter', 'snow', 'christmas', 'xmas', 'holiday'],
+      palettes: [['#0b2545', '#f8f9fa', '#e63946', '#a8dadc'], ['#f8f9fa', '#0b2545', '#c1121f', '#2d6a4f'], ['#1b4332', '#f8f9fa', '#e63946', '#f4d35e'], ['#13315c', '#eef4ed', '#8da9c4', '#f4d35e']],
+      layouts: ['orbit', 'ripple', 'split', 'stack'], patterns: ['dots', 'rings', 'none'], fonts: ['wave', 'tech'], grain: 'light',
+      kickers: ['WINTER LIVE', 'YEAR-END CONCERT', 'SNOW NIGHT SESSION'], why: '눈 내리는 밤의 남색·빨강·흰색' },
+    { key: 'spring', label: '봄 · 벚꽃', words: ['봄', '벚꽃', '꽃', '신학기', '새학기', '설렘', '파스텔', 'spring', 'blossom', 'flower', 'pastel'],
+      palettes: [['#ffe5ec', '#3a2e39', '#ff8fab', '#8fd694'], ['#fdf6ff', '#2e2a3b', '#c77dff', '#ffafcc'], ['#e9f5db', '#2d3a2e', '#ff8fab', '#90be6d'], ['#fff1e6', '#3a2e39', '#f28482', '#84a59d']],
+      layouts: ['ripple', 'orbit', 'sunburst', 'grid'], patterns: ['blobs', 'dots', 'waves'], fonts: ['wave', 'grotesk'], grain: 'none',
+      kickers: ['SPRING SOUND', 'BLOOMING LIVE', 'NEW SEASON CONCERT'], why: '벚꽃 분홍과 새싹 연두의 파스텔' },
+    { key: 'jazz', label: '재즈 · 라운지', words: ['재즈', '블루스', '라운지', '소울', '고급', '클래식', '와인', 'jazz', 'blues', 'soul', 'lounge', 'classy', 'r&b'],
+      palettes: [['#0f3d3e', '#f4f1de', '#e0a458', '#c06c3e'], ['#2b0f17', '#f4e9d8', '#d4a373', '#8c2f39'], ['#141210', '#f4e9d8', '#c9a227', '#6b4226'], ['#f4e9d8', '#1f1a17', '#8c2f39', '#c9a227']],
+      layouts: ['stack', 'split', 'ripple', 'orbit'], patterns: ['none', 'rings', 'stripes'], fonts: ['wave', 'mono'], grain: 'light',
+      kickers: ['AN EVENING OF JAZZ', 'LATE NIGHT SESSION', 'SOUL & SWING'], why: '짙은 초록·버건디에 금빛 포인트' },
+    { key: 'pop', label: '팝 · 발랄', words: ['팝', '발랄', '신나는', '밝은', '청춘', '귀여운', '경쾌', '컬러풀', '축제', '학교', 'pop', 'fun', 'colorful', 'happy', 'party', 'kpop'],
+      palettes: [['#ff5d8f', '#1a1423', '#fff3b0', '#7b2cbf'], ['#3d9a2b', '#141210', '#7f5cff', '#d6ff3a'], ['#f2541b', '#fff8f2', '#7f5cff', '#d6ff3a'], ['#7f5cff', '#fff8f2', '#d6ff3a', '#ff5d8f']],
+      layouts: ['grid', 'orbit', 'sunburst', 'ripple'], patterns: ['dots', 'blobs', 'stripes'], fonts: ['grotesk', 'wave'], grain: 'none',
+      kickers: ['LET\'S GET LOUD', 'MUSIC & ARTS FESTIVAL', 'ALL DAY LIVE'], why: '쨍한 원색과 통통 튀는 패턴' },
+  ];
+  const MOODS = STYLES.map((s) => s.label);
+
+  /** 글에서 스타일 점수 (분위기 문장은 3점, 페스티벌 테마·이름 2점, 장르 1점) */
+  function moodScores(mood, f) {
+    const low = (t) => String(t || '').toLowerCase();
+    const parts = [[low(mood), 3], [low(`${f.theme || ''} ${f.name || ''}`), 2], [low((f.acts || []).map((a) => a.genre).join(' ')), 1]];
+    return STYLES.map((s) => ({ s, score: parts.reduce((sum, [txt, w]) => sum + (txt ? s.words.filter((wd) => txt.includes(wd)).length * w : 0), 0) }))
+      .filter((x) => x.score > 0).sort((a, b) => b.score - a.score);
+  }
+
+  /** 분위기 시안 3개 */
+  function moodConcepts(f, mood = '') {
+    const r = Math.random, one = (a) => a[Math.floor(r() * a.length)];
+    const shuffle = (a) => a.map((v) => [r(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
+    // 적은 분위기가 있으면 그것만 따르고, 없거나 못 알아들으면 테마·이름·장르로
+    const moodHits = moodScores(mood, { acts: [] });
+    const fromMood = moodHits.length > 0;
+    const hits = fromMood ? moodHits : moodScores('', f);
+    // 고른 스타일: 1개면 3번, 2개면 [1,1,2], 3개 이상이면 위에서 3개. 하나도 없으면 서로 다른 3개를 무작위로
+    let picks = hits.map((x) => x.s);
+    if (!picks.length) picks = shuffle(STYLES).slice(0, 3);
+    else if (picks.length === 1) picks = [picks[0], picks[0], picks[0]];
+    else if (picks.length === 2) picks = [picks[0], picks[0], picks[1]];
+    else picks = picks.slice(0, 3);
+    const usedLayouts = new Set(), usedPal = new Set();
+    return picks.map((s, i) => {
+      const layout = shuffle(s.layouts).find((l) => !usedLayouts.has(l)) || shuffle(Object.keys(LAYOUTS)).find((l) => !usedLayouts.has(l)) || one(s.layouts);
+      usedLayouts.add(layout);
+      const pal = shuffle(s.palettes).find((p) => !usedPal.has(p.join())) || one(s.palettes);
+      usedPal.add(pal.join());
+      let [bg, fg, accent, accent2] = pal;
+      if (contrast(bg, fg) < 4.5) fg = onColor(bg, '#141210', '#fff8f2');
+      return normalize({
+        name: `${s.label} ${i + 1}`,
+        rationale: `${fromMood ? '‘' + s.label + '’ 분위기' : (hits.length ? '테마·장르에 맞춘 ‘' + s.label + '’' : '추천 ‘' + s.label + '’')} — ${s.why}`,
+        layout, pattern: one(s.patterns), headlineFont: one(s.fonts),
+        palette: { bg, fg, accent, accent2 }, kicker: one(s.kickers), tagline: f.theme || '',
+        headlinerScale: one(['huge', 'large', 'large', 'normal']), uppercase: s.key !== 'dreamy' && s.key !== 'warm' ? r() > 0.2 : r() > 0.6,
+        grain: s.grain, seed: Math.floor(r() * 100000),
+      }, f);
+    });
+  }
+
   /* ---------- 페스티벌 정보 ---------- */
   function info(f, sp) {
     const up = (t) => (sp.uppercase ? String(t || '').toUpperCase() : String(t || ''));
@@ -499,5 +591,5 @@ const Poster = (() => {
     } catch (e) { /* 대체 글꼴 */ }
   }
 
-  return { W, H, LAYOUTS, PATTERNS, FONTS, SCALES, GRAINS, normalize, preset, random, draw, fonts, grain, wave, fitFont, contrast };
+  return { W, H, LAYOUTS, PATTERNS, FONTS, SCALES, GRAINS, MOODS, normalize, preset, random, moodConcepts, draw, fonts, grain, wave, fitFont, contrast };
 })();

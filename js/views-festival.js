@@ -491,7 +491,7 @@
 
   /* ---------- Poster (Canvas) ---------- */
   // 최근 AI 시안은 페스티벌별로 이 화면에만 보관 (저장되는 건 적용한 시안 하나 = f.poster)
-  let aiConcepts = null, aiFor = null, aiMood = '', aiBusy = false;
+  let aiConcepts = null, aiFor = null, aiMood = '', aiBusy = false, aiSource = '';
 
   /** AI 에 보낼 페스티벌 요약 */
   const posterBrief = (f) => ({
@@ -509,16 +509,17 @@
     el.innerHTML = `
       <div class="poster-layout">
         <aside>
-          <div class="section-head"><h3>AI Design</h3><span class="count">Claude</span></div>
+          <div class="section-head"><h3>Design Ideas</h3>${aiSource ? `<span class="count">${esc(aiSource)}</span>` : ''}</div>
           <div class="ai-box">
-            <textarea class="input" id="aiMood" maxlength="300" rows="2" placeholder="원하는 분위기 (예: 90년대 레트로 · 네온 사이버펑크 · 한여름 강변 피크닉)">${esc(aiMood)}</textarea>
-            <div class="row" style="margin-top:8px">
-              <button class="btn solid" id="aiGo" ${aiBusy ? 'disabled' : ''}>${aiBusy ? 'AI가 디자인하는 중…' : '✦ AI 시안 3개'}</button>
-              <button class="btn" id="rand" title="AI 없이 무작위 조합">🎲 랜덤</button>
+            <textarea class="input" id="aiMood" maxlength="300" rows="2" placeholder="원하는 분위기 (예: 90년대 레트로 · 네온 클럽 · 한여름 강변 피크닉)">${esc(aiMood)}</textarea>
+            <div class="mood-chips">${Poster.MOODS.map((m) => `<button type="button" class="pick-chip" data-mood="${esc(m)}">${esc(m)}</button>`).join('')}</div>
+            <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+              <button class="btn solid" id="moodGo">✦ 분위기 시안 3개</button>
+              <button class="btn" id="aiGo" ${aiBusy ? 'disabled' : ''}>${aiBusy ? 'AI가 디자인하는 중…' : 'AI 시안'}</button>
+              <button class="btn" id="rand" title="완전 무작위 조합">🎲 랜덤</button>
             </div>
-            <p class="muted ai-note">${Store.AI.available
-              ? '페스티벌 이름·테마·장소·라인업·장르를 보고 서로 다른 시안 3개를 제안합니다. 20~40초 걸립니다.'
-              : 'AI 디자인은 로그인하면 쓸 수 있습니다. 🎲 랜덤은 언제나 가능합니다.'}</p>
+            <p class="muted ai-note"><b>분위기 시안</b>은 무료·즉시, 위 분위기 단어와 테마·장르를 보고 만듭니다.
+              <b>AI 시안</b>은 문장을 더 자유롭게 이해하지만 관리자가 AI 키를 설정해야 하고 10~40초 걸립니다.</p>
             <div class="ai-concepts" id="aiList">${aiBusy ? '<p class="search-msg">시안을 만드는 중…</p>' : (concepts || []).map((c, i) => `
               <button type="button" class="ai-card" data-ci="${i}" title="${esc(c.rationale)}">
                 <canvas width="216" height="270"></canvas>
@@ -571,14 +572,28 @@
     el.querySelector('#dl').onclick = () => UI.download(canvas.toDataURL('image/png'), `${f.name}-poster.png`);
     el.querySelector('#share').onclick = () => UI.shareCanvas(canvas, `${f.name}-poster.png`, `${f.name} @ ${f.venue}`);
 
+    const moodBox = el.querySelector('#aiMood');
+    moodBox.oninput = () => { aiMood = moodBox.value; };
+    el.querySelectorAll('[data-mood]').forEach((b) => b.onclick = () => {
+      const m = b.dataset.mood.split(' · ')[0];
+      const cur = moodBox.value.trim();
+      moodBox.value = cur.includes(m) ? cur : (cur ? `${cur} · ${m}` : m);
+      aiMood = moodBox.value; moodBox.focus();
+    });
+    el.querySelector('#moodGo').onclick = () => {
+      aiMood = moodBox.value.trim();
+      aiConcepts = Poster.moodConcepts(f, aiMood); aiFor = f.id; aiSource = '무료 · 분위기';
+      App.render();
+      toast(aiMood ? '분위기 시안 3개 — 눌러서 적용하세요 (다시 누르면 새 조합)' : '테마·장르로 시안 3개를 만들었습니다 — 분위기를 적으면 더 잘 맞춰요');
+    };
     el.querySelector('#aiGo').onclick = async () => {
       if (!Store.AI.available) { toast('AI 디자인은 로그인하면 쓸 수 있습니다'); go('#/account'); return; }
-      aiMood = el.querySelector('#aiMood').value.trim();
+      aiMood = moodBox.value.trim();
       aiBusy = true; App.render();
       const fid = f.id;
       try {
-        const cs = await Store.AI.posterConcepts({ festival: posterBrief(f), mood: aiMood });
-        aiConcepts = cs.map((c) => Poster.normalize(c, f)); aiFor = fid;
+        const res = await Store.AI.posterConcepts({ festival: posterBrief(f), mood: aiMood });
+        aiConcepts = res.concepts.map((c) => Poster.normalize(c, f)); aiFor = fid; aiSource = res.provider || 'AI';
         toast('시안이 도착했습니다 — 눌러서 적용하세요');
       } catch (err) {
         toast(err.message);

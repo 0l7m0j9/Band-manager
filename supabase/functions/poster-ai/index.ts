@@ -1,11 +1,11 @@
 // =========================================================
 // BAND MANAGER — AI 포스터 디자인 (Supabase Edge Function)
 //
-// 앱이 페스티벌 정보 + 원하는 분위기를 보내면, Claude 가 포스터 "디자인 시안" 3개를
+// 앱이 페스티벌 정보 + 원하는 분위기를 보내면, AI(Gemini 또는 Claude)가 포스터 "디자인 시안" 3개를
 // JSON 으로 만들어 돌려줍니다. 실제 그림은 앱(js/poster.js)이 이 시안대로 Canvas 에 그립니다.
 //
-// 배포:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-//        supabase functions deploy poster-ai
+// 배포:  Supabase 대시보드 → Edge Functions → Secrets 에 GEMINI_API_KEY(무료) 또는 ANTHROPIC_API_KEY
+//        → Deploy a new function(Via Editor) 이름 poster-ai 로 이 파일 붙여넣기
 // 로그인한 회원만 호출할 수 있고, 회원당 하루 횟수 제한이 있습니다 (schema.sql 의 use_ai_quota).
 // =========================================================
 import Anthropic from "npm:@anthropic-ai/sdk";
@@ -126,11 +126,82 @@ function festivalBrief(f: Record<string, unknown>) {
   };
 }
 
-const client = new Anthropic(); // ANTHROPIC_API_KEY (supabase secrets)
+// ---------- 어떤 AI 를 쓸지: 넣어 둔 키(supabase secrets)로 정함 ----------
+//   GEMINI_API_KEY    → 구글 Gemini (무료 등급 가능)            ← 둘 다 있으면 이쪽이 기본
+//   ANTHROPIC_API_KEY → Claude (유료)
+//   AI_PROVIDER=claude 또는 gemini 로 강제할 수 있음. GEMINI_MODEL 로 모델 이름 변경 가능
+const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.5-flash-lite";
+const HAS_CLAUDE = !!Deno.env.get("ANTHROPIC_API_KEY");
+const forced = (Deno.env.get("AI_PROVIDER") ?? "").toLowerCase();
+const PROVIDER = forced === "claude" && HAS_CLAUDE ? "claude"
+  : forced === "gemini" && GEMINI_KEY ? "gemini"
+  : GEMINI_KEY ? "gemini" : HAS_CLAUDE ? "claude" : "";
+let claude: Anthropic | null = null; // 키가 없으면 만들지 않음 (만들 때 키가 없으면 오류)
+
+class AppError extends Error { constructor(msg: string, public status: number) { super(msg); } }
+
+/** Gemini 에는 스키마 대신 글로 형식을 알려 주고, 결과는 normalize 로 다시 검사 */
+const JSON_GUIDE = `
+
+Reply with JSON only, no markdown, in exactly this shape:
+{"concepts":[{"name":string,"rationale":string,"layout":one of ${JSON.stringify(LAYOUTS)},"pattern":one of ${JSON.stringify(PATTERNS)},"headlineFont":one of ${JSON.stringify(FONTS)},"palette":{"bg":"#RRGGBB","fg":"#RRGGBB","accent":"#RRGGBB","accent2":"#RRGGBB"},"kicker":string (max 28 chars),"tagline":string (max 40 chars),"footerNote":string (max 40 chars),"headlinerScale":one of ${JSON.stringify(SCALES)},"uppercase":boolean,"grain":one of ${JSON.stringify(GRAIN)},"seed":integer}, ...3 items]}`;
+
+async function askGemini(prompt: string): Promise<unknown> {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM + JSON_GUIDE }] },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 },
+    }),
+  });
+  if (!r.ok) {
+    const detail = (await r.text()).slice(0, 300);
+    console.error("gemini", r.status, detail);
+    if (r.status === 429) throw new AppError("무료 AI 사용 한도에 걸렸습니다. 잠시 후(또는 내일) 다시 시도하거나 ✦ 분위기 시안을 쓰세요", 429);
+    if (r.status === 400 || r.status === 401 || r.status === 403) throw new AppError("AI 키 설정 오류 (GEMINI_API_KEY)", 500);
+    if (r.status === 404) throw new AppError(`AI 모델(${GEMINI_MODEL})을 찾을 수 없습니다 — GEMINI_MODEL 을 확인하세요`, 500);
+    throw new AppError(`AI 오류 (${r.status})`, 502);
+  }
+  const j = await r.json();
+  const cand = j?.candidates?.[0];
+  if (!cand || cand.finishReason === "SAFETY" || cand.finishReason === "PROHIBITED_CONTENT") {
+    throw new AppError("AI가 이 요청으로는 디자인을 만들 수 없다고 답했습니다. 분위기 설명을 바꿔 보세요", 422);
+  }
+  const text = (cand.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("")
+    .replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "");
+  return JSON.parse(text);
+}
+
+async function askClaude(prompt: string): Promise<unknown> {
+  claude ??= new Anthropic(); // ANTHROPIC_API_KEY
+  try {
+    const response = await claude.beta.messages.create({
+      model: "claude-opus-5-5",
+      max_tokens: 16000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default", // 안전 분류기가 거절하면 서버에서 다른 모델로 자동 재시도
+      system: SYSTEM,
+      messages: [{ role: "user", content: prompt }],
+      output_config: { effort: "medium", format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
+    });
+    if (response.stop_reason === "refusal") throw new AppError("AI가 이 요청으로는 디자인을 만들 수 없다고 답했습니다. 분위기 설명을 바꿔 보세요", 422);
+    if (response.stop_reason === "max_tokens") throw new AppError("AI 응답이 너무 길어 잘렸습니다. 다시 시도하세요", 502);
+    return JSON.parse(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+  } catch (e) {
+    if (e instanceof Anthropic.RateLimitError) throw new AppError("AI 서버가 바쁩니다. 잠시 후 다시 시도하세요", 429);
+    if (e instanceof Anthropic.AuthenticationError) throw new AppError("AI 키 설정 오류 (ANTHROPIC_API_KEY)", 500);
+    if (e instanceof Anthropic.APIError) throw new AppError(`AI 오류 (${e.status})`, 502);
+    throw e;
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
+  if (!PROVIDER) return json({ error: "AI 키가 설정되지 않았습니다 (GEMINI_API_KEY 또는 ANTHROPIC_API_KEY) — ✦ 분위기 시안(무료)을 이용하세요" }, 503);
 
   // 1) 로그인한 회원인지 확인
   const auth = req.headers.get("Authorization") ?? "";
@@ -159,30 +230,15 @@ Deno.serve(async (req) => {
     "\nReturn exactly 3 concepts.",
   ].join("\n");
 
-  // 4) Claude 호출 — 구조화 출력으로 스키마에 맞는 JSON 만 받음
+  // 4) AI 호출 → 결과를 한 번 더 검사
   try {
-    const response = await client.beta.messages.create({
-      model: "claude-opus-5-5",
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default", // 안전 분류기가 거절하면 서버에서 다른 모델로 자동 재시도
-      system: SYSTEM,
-      messages: [{ role: "user", content: prompt }],
-      output_config: { effort: "medium", format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
-    });
-
-    if (response.stop_reason === "refusal") return json({ error: "AI가 이 요청으로는 디자인을 만들 수 없다고 답했습니다. 분위기 설명을 바꿔 보세요" }, 422);
-    if (response.stop_reason === "max_tokens") return json({ error: "AI 응답이 너무 길어 잘렸습니다. 다시 시도하세요" }, 502);
-
-    const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("");
-    const parsed = JSON.parse(text) as { concepts?: Concept[] };
-    const concepts = (parsed.concepts ?? []).slice(0, 3).map(normalize);
+    const parsed = PROVIDER === "gemini" ? await askGemini(prompt) : await askClaude(prompt);
+    const list = Array.isArray(parsed) ? parsed : ((parsed as { concepts?: unknown })?.concepts ?? []);
+    const concepts = (Array.isArray(list) ? list : []).slice(0, 3).map((c) => normalize((c ?? {}) as Concept));
     if (!concepts.length) return json({ error: "AI가 시안을 만들지 못했습니다" }, 502);
-    return json({ concepts });
+    return json({ concepts, provider: PROVIDER === "gemini" ? "Gemini" : "Claude" });
   } catch (e) {
-    if (e instanceof Anthropic.RateLimitError) return json({ error: "AI 서버가 바쁩니다. 잠시 후 다시 시도하세요" }, 429);
-    if (e instanceof Anthropic.AuthenticationError) return json({ error: "AI 키 설정 오류 (ANTHROPIC_API_KEY)" }, 500);
-    if (e instanceof Anthropic.APIError) return json({ error: `AI 오류 (${e.status})` }, 502);
+    if (e instanceof AppError) return json({ error: e.message }, e.status);
     if (e instanceof SyntaxError) return json({ error: "AI 응답을 해석하지 못했습니다. 다시 시도하세요" }, 502);
     console.error(e);
     return json({ error: "AI 디자인 생성 실패" }, 500);

@@ -97,12 +97,18 @@
 
 ---
 
-## AI 포스터 설정 (선택)
-1. [Supabase CLI](https://supabase.com/docs/guides/cli)로 `npx supabase login` → `npx supabase link --project-ref <프로젝트 ref>`
-2. `npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...`
-3. `npx supabase functions deploy poster-ai`
-- 로그인한 회원만, 하루 20회까지. 모델은 `claude-opus-5-5`입니다.
-- 설정하지 않아도 🎲 랜덤과 직접 편집은 쓸 수 있습니다.
+## 포스터 시안
+- **✦ 분위기 시안 (무료, 설정 없음)**: 분위기 단어(레트로·네온·몽환·펑크·여름·미니멀·어쿠스틱·겨울·봄·재즈·팝)와 테마·장르를 보고 레이아웃이 서로 다른 시안 3개를 바로 만듭니다.
+- **AI 시안 (선택)**: 문장을 자유롭게 이해합니다. 아래 설정이 필요합니다.
+
+### AI 시안 설정
+1. 키 하나를 준비합니다.
+   - **무료**: [Google AI Studio](https://aistudio.google.com)에서 API 키 → Supabase **Edge Functions → Secrets**에 `GEMINI_API_KEY`
+     (무료 등급은 보낸 내용이 구글 서비스 개선에 쓰일 수 있고, 한도가 있습니다. 모델은 기본 `gemini-3.5-flash-lite`, 바꾸려면 `GEMINI_MODEL`)
+   - **유료**: Anthropic API 키 → `ANTHROPIC_API_KEY` (모델 `claude-opus-5-5`)
+   - 둘 다 넣으면 Gemini가 기본. `AI_PROVIDER`를 `claude`로 두면 Claude를 씁니다.
+2. **Edge Functions → Deploy a new function → Via Editor**, 이름 `poster-ai`, `supabase/functions/poster-ai/index.ts` 내용을 붙여넣고 Deploy.
+- 로그인한 회원만, 하루 20회까지.
 
 ---
 

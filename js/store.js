@@ -750,7 +750,7 @@ const Store = (() => {
   };
 })();
 
-/* ---------- AI (Supabase Edge Function 'poster-ai' → Claude) ---------- */
+/* ---------- AI (Supabase Edge Function 'poster-ai' → Gemini 무료 또는 Claude) ---------- */
 Store.AI = {
   get available() { return !!(Store.sb && Store.Auth.user); },
   async posterConcepts(payload) {
@@ -763,11 +763,11 @@ Store.AI = {
         const j = await error.context.json();
         if (j && j.error) { msg = j.error; appMsg = true; }
       } catch (e) { /* */ }
-      if (!appMsg && (status === 404 || /Failed to send|not found/i.test(msg))) msg = 'AI 시안 기능이 아직 설정되지 않았습니다 — 🎲 랜덤이나 직접 편집을 이용하세요';
-      else if (!appMsg) msg = 'AI 서버 오류로 시안을 만들지 못했습니다. 잠시 후 다시 시도하세요';
+      if (!appMsg && (status === 404 || /Failed to send|not found/i.test(msg))) msg = 'AI 시안 기능이 아직 설정되지 않았습니다 — ✦ 분위기 시안(무료)을 이용하세요';
+      else if (!appMsg) msg = 'AI 서버 오류로 시안을 만들지 못했습니다. ✦ 분위기 시안(무료)을 이용하세요';
       throw new Error(msg);
     }
     if (!data || !Array.isArray(data.concepts)) throw new Error('AI 응답 형식이 올바르지 않습니다');
-    return data.concepts;
+    return { concepts: data.concepts, provider: typeof data.provider === 'string' ? data.provider.slice(0, 20) : 'AI' };
   },
 };
