@@ -402,8 +402,23 @@ window.Views = window.Views || {};
     return play + mc + Math.max(0, songs.length - 1) * (Number(sl.transition) || 0);
   };
 
-  /** iTunes Search API (키 불필요, JSONP로 호출 → file://에서도 동작) */
-  function itunesSearch(term) {
+  /** iTunes Search API (키 불필요). 먼저 fetch(CORS), 안 되면 JSONP.
+   *  iOS·인앱 브라우저(인스타·카톡)에서는 JSONP <script> 요청이 앱스토어로 넘어가 막히는 경우가 있어 fetch 를 먼저 씀 */
+  async function itunesSearch(term) {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=12&country=US`;
+    try {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const t = setTimeout(() => ctl && ctl.abort(), 8000);
+      const r = await fetch(url, { mode: 'cors', credentials: 'omit', signal: ctl ? ctl.signal : undefined });
+      clearTimeout(t);
+      if (r.ok) {
+        const data = JSON.parse(await r.text());
+        return (data && data.results) || [];
+      }
+    } catch (e) { /* JSONP 로 다시 시도 */ }
+    return itunesJsonp(url);
+  }
+  function itunesJsonp(url) {
     return new Promise((res, rej) => {
       const cb = `__itunes${Date.now()}${Math.floor(Math.random() * 1e4)}`;
       const s = document.createElement('script');
@@ -411,7 +426,7 @@ window.Views = window.Views || {};
       const timer = setTimeout(() => { done(); rej(new Error('timeout')); }, 8000);
       window[cb] = (data) => { done(); res((data && data.results) || []); };
       s.onerror = () => { done(); rej(new Error('network')); };
-      s.src = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=12&country=US&callback=${cb}`;
+      s.src = `${url}&callback=${cb}`;
       document.head.appendChild(s);
     });
   }
@@ -476,7 +491,8 @@ window.Views = window.Views || {};
               f.bpm.focus(); f.bpm.select();
             });
           } catch (e) {
-            box.innerHTML = '<p class="search-msg">검색에 실패했습니다. 인터넷 연결을 확인하거나 직접 입력해 주세요.</p>';
+            const inApp = /Instagram|FBAN|FBAV|KAKAOTALK|NAVER|Line\//i.test(navigator.userAgent);
+            box.innerHTML = `<p class="search-msg">검색에 실패했습니다. ${inApp ? '인스타·카톡 같은 앱 안의 브라우저에서는 막힐 수 있어요. 오른쪽 위 메뉴 → <b>Safari/Chrome으로 열기</b> 후 다시 해 보세요.' : '인터넷 연결을 확인하거나 직접 입력해 주세요.'}</p>`;
           }
         };
         f.querySelector('#qBtn').onclick = run;
