@@ -12,7 +12,7 @@
    ```sql
    select public.bootstrap_admin('가입한_아이디');
    ```
-5. 이후 공동 관리자는 앱의 **Account → 회원 목록 → 공동 관리자로** 버튼으로 추가합니다.
+5. 이후 공동 관리자는 앱의 **Members → 회원 선택 → 공동 관리자로 지정**으로 추가합니다.
 
 `js/config.js`의 Supabase 주소·공개 키는 이미 들어 있습니다.
 
@@ -21,7 +21,7 @@
 ## 계급과 메뉴
 | 계급 | 정하는 방법 | 상단 메뉴 |
 |---|---|---|
-| **관리자** | 최초 관리자(SQL) / 관리자가 지정 | Home · Bands · Calendar · Rooms · Festival · Board |
+| **관리자** | 최초 관리자(SQL) / 관리자가 지정 | Home · Bands · Calendar · Rooms · Festival · Board · Members |
 | **단장** | 밴드를 만든 사람, 또는 단장이 지정한 밴드원 | Home · Bands · Calendar · Rooms |
 | **부원** | 그 외 모든 회원 | Home · Bands · Calendar |
 
@@ -68,9 +68,18 @@
 ### Board (관리자)
 - 글·사진(최대 4장) 올리기, 수정, 삭제, 공지 고정
 
+### Members (관리자)
+- 그룹 참여자 명단: 이름·아이디·악기·소속 밴드·전화번호
+- 통계(전체·관리자·단장·밴드 없음), 악기별 인원 — 누르면 그 악기 회원만
+- 검색(이름·아이디·악기·밴드), 필터(전체 / 관리자 / 단장 / 밴드 없음)
+- 회원을 누르면 관리 창:
+  - **공동 관리자 지정/해제** (마지막 관리자는 해제 불가)
+  - **밴드에 바로 넣기**(부원/단장, 신청·승인 없이), 밴드에서 빼기, 단장↔부원 변경
+  - **그룹에서 내보내기** (그 그룹의 밴드 소속·개인 일정도 정리)
+- **명단 CSV** 내려받기 (엑셀에서 열림, 지금 필터·검색 결과 기준)
+
 ### Account (모두)
 - 내 정보(이름·악기·전화번호) 수정, 그룹 참여·전환, 로그아웃
-- **관리자**: 그룹 회원 목록(전화번호 포함), 공동 관리자 지정/해제
 - **예전 데이터 가져오기**: 아래 참고
 
 ---
@@ -113,6 +122,7 @@ js/views-calendar.js       Calendar (+ 일정 모음, 작은 달력)
 js/views-rooms.js          Rooms (연습실 예약·승인)
 js/views-festival.js       Festival (관리자) + 공개 스위치 · Setlists
 js/views-board.js          Board (관리자) + 글 보기
+js/views-members.js        Members (관리자): 참여자 명단·회원 관리·CSV
 js/views-account.js        로그인·회원가입·가입 정보·Account·예전 데이터 가져오기
 js/app.js                  라우터 + 계급별 메뉴
 supabase/schema.sql        v1(보관) + v2(그룹·계급·밴드·일정·연습실·게시판) 표·권한·함수

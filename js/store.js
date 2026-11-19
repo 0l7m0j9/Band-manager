@@ -546,7 +546,13 @@ const Store = (() => {
     async setAdmin(userId, on) {
       const { error } = await sb.rpc('set_group_admin', { p_group: gid, p_user: userId, p_admin: on });
       if (error) throw new Error(errMsg(error));
-      refreshSoon('me');
+      await reload('me');
+    },
+    /** 관리자: 그룹에서 내보내기 */
+    async removeMember(userId) {
+      const { error } = await sb.rpc('remove_group_member', { p_group: gid, p_user: userId });
+      if (error) throw new Error(errMsg(error));
+      pending.add('members'); await reload('roster');
     },
     person: (id) => roster.find((r) => r.user_id === id) || null,
     personName,
@@ -590,7 +596,9 @@ const Store = (() => {
       const { error } = await sb.rpc('set_band_member', { p_band: bandId, p_user: userId, p_role: r, p_part: part || '', p_position: position || '' });
       if (error) throw new Error(errMsg(error)); refreshSoon('members');
     },
-    async removeMember(bandId, userId) { const { error } = await sb.rpc('remove_band_member', { p_band: bandId, p_user: userId }); if (error) throw new Error(errMsg(error)); refreshSoon('members'); },
+    async removeMember(bandId, userId) { const { error } = await sb.rpc('remove_band_member', { p_band: bandId, p_user: userId }); if (error) throw new Error(errMsg(error)); await reload('members'); },
+    /** 관리자: 회원을 밴드에 바로 넣기 / 역할 바꾸기 */
+    async adminSet(bandId, userId, r) { const { error } = await sb.rpc('admin_set_band_member', { p_band: bandId, p_user: userId, p_role: r }); if (error) throw new Error(errMsg(error)); await reload('members'); },
     async remove(bandId) {
       const { error } = await sb.from('bands').delete().eq('id', bandId);
       if (error) throw new Error(errMsg(error));

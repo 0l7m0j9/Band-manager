@@ -12,10 +12,10 @@ const App = (() => {
   const NAV = {
     member: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar']],
     leader: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms']],
-    admin: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms'], ['festivals', 'Festival'], ['board', 'Board']],
+    admin: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms'], ['festivals', 'Festival'], ['board', 'Board'], ['members', 'Members']],
   };
   const BAND_TABS = [['studio', 'Studio'], ['setlist', 'Setlist'], ['rehearsal', 'Rehearsal'], ['progress', 'Progress']];
-  const ADMIN_ONLY = new Set(['festivals', 'festival', 'timetable', 'personal', 'board']);
+  const ADMIN_ONLY = new Set(['festivals', 'festival', 'timetable', 'personal', 'board', 'members']);
 
   function parse() {
     const parts = (location.hash.replace(/^#\/?/, '') || 'home').split('/').filter(Boolean);
@@ -122,7 +122,7 @@ const App = (() => {
       if (name === 'band') key = 'bands';
       if (name === 'festival' || name === 'timetable') key = 'festivals';
       const routes = {
-        home: V.home, bands: V.bands, calendar: V.calendar, rooms: V.rooms, board: V.board, account: V.account,
+        home: V.home, bands: V.bands, calendar: V.calendar, rooms: V.rooms, board: V.board, account: V.account, members: V.members,
         festivals: V.festivals, festival: V.festival, timetable: V.timetable,
       };
       if (name !== 'band' && !routes[name]) { name = 'home'; key = 'home'; }

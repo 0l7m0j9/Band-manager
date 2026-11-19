@@ -169,20 +169,11 @@ window.Views = window.Views || {};
           <button class="btn" id="imp">예전 데이터 가져오기</button>
         </section>
       </div>
-      ${admin ? `<section class="section" style="margin-top:12px">
-        <div class="section-head"><h3>${esc(G.current.name)} 회원</h3><span class="count">${roster.length}명 · 관리자만 보임</span></div>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>이름</th><th>아이디</th><th class="hide-sm">악기</th><th>전화번호</th><th>권한</th><th></th></tr></thead>
-          <tbody>${roster.map((r) => `<tr>
-            <td><b>${esc(r.name)}</b></td>
-            <td class="muted">@${esc(r.username)}</td>
-            <td class="hide-sm">${esc((r.instruments || []).join(', ') || '—')}</td>
-            <td class="num">${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : '—'}</td>
-            <td>${r.role === 'admin' ? '<span class="chip ink">관리자</span>' : '<span class="chip">회원</span>'}</td>
-            <td class="r">${r.user_id === me ? '' : `<button class="btn sm ${r.role === 'admin' ? 'ghost' : ''}" data-adm="${r.user_id}" data-on="${r.role === 'admin' ? 0 : 1}">${r.role === 'admin' ? '관리자 해제' : '공동 관리자로'}</button>`}</td>
-          </tr>`).join('')}</tbody>
-        </table></div>
-      </section>` : ''}`;
+      ${admin ? `<a class="panel" href="#/members" style="display:block;text-decoration:none;margin-top:12px">
+        <span class="lbl muted">admin</span>
+        <h3 style="font-size:22px;margin:6px 0 4px">${esc(G.current.name)} 회원 ${roster.length}명 →</h3>
+        <p class="muted">Members에서 명단 확인, 공동 관리자 지정, 밴드 배치, 내보내기를 할 수 있습니다.</p>
+      </a>` : ''}`;
 
     el.querySelector('#logout').onclick = async (e) => { e.target.disabled = true; await A.signOut(); toast('로그아웃되었습니다'); location.hash = '#/home'; };
     const pf = el.querySelector('#pf');
@@ -196,12 +187,6 @@ window.Views = window.Views || {};
     const jf = el.querySelector('#jf');
     if (jf) jf.onsubmit = async (e) => { e.preventDefault(); try { await G.join(jf.g.value); toast('그룹에 참여했습니다'); location.hash = '#/home'; } catch (er) { toast(er.message); } };
     el.querySelector('#imp').onclick = () => legacyImport();
-    el.querySelectorAll('[data-adm]').forEach((b) => b.onclick = () => {
-      const on = b.dataset.on === '1', r = roster.find((x) => x.user_id === b.dataset.adm);
-      UI.confirm(on ? `<b>${esc(r.name)}</b> 님을 공동 관리자로 지정할까요?<br><span class="muted">그룹의 모든 권한(밴드·페스티벌·연습실·게시판 관리)을 갖게 됩니다.</span>` : `<b>${esc(r.name)}</b> 님의 관리자 권한을 해제할까요?`, async () => {
-        try { await G.setAdmin(r.user_id, on); toast(on ? '공동 관리자로 지정했습니다' : '관리자 권한을 해제했습니다'); } catch (er) { toast(er.message); }
-      }, on ? '지정' : '해제');
-    });
   };
 
   /* ---------------- 예전 데이터 가져오기 ---------------- */

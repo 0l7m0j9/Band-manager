@@ -792,6 +792,32 @@ begin
   delete from public.band_members where band_id = p_band and user_id = p_user;
 end $$;
 
+-- 관리자: 회원을 그룹에서 내보내기 (그 그룹 밴드 소속·개인 일정도 함께 정리)
+create or replace function public.remove_group_member(p_group uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_group_admin(p_group) then raise exception '관리자만 할 수 있습니다'; end if;
+  if p_user = auth.uid() then raise exception '자기 자신은 내보낼 수 없습니다'; end if;
+  delete from public.band_members where user_id = p_user and band_id in (select id from public.bands where group_id = p_group);
+  delete from public.events where owner = p_user and group_id = p_group and scope = 'personal';
+  delete from public.group_members where group_id = p_group and user_id = p_user;
+end $$;
+
+-- 관리자: 회원을 밴드에 바로 넣기 (신청·승인 없이) / 역할 바꾸기
+create or replace function public.admin_set_band_member(p_band uuid, p_user uuid, p_role text) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  g uuid := public.band_group(p_band);
+begin
+  if g is null or not public.is_group_admin(g) then raise exception '관리자만 할 수 있습니다'; end if;
+  if p_role not in ('leader', 'member') then raise exception '잘못된 역할입니다'; end if;
+  if not exists (select 1 from public.group_members where group_id = g and user_id = p_user) then
+    raise exception '이 그룹 회원이 아닙니다';
+  end if;
+  insert into public.band_members (band_id, user_id, role, status) values (p_band, p_user, p_role, 'approved')
+  on conflict (band_id, user_id) do update set role = excluded.role, status = 'approved';
+end $$;
+
 -- 공개된 페스티벌 (부원용). 공개하지 않은 내용은 빼고 돌려줌
 create or replace function public.published_festivals(p_group uuid)
 returns table (id uuid, published jsonb, data jsonb, updated_at timestamptz)
@@ -852,7 +878,8 @@ begin
     'public.admin_of_user(uuid)', 'public.complete_profile(text, text[], text, uuid)', 'public.join_group(uuid)',
     'public.group_roster(uuid)', 'public.set_group_admin(uuid, uuid, boolean)', 'public.create_band(uuid, text, text, text, text)',
     'public.request_band_join(uuid, text)', 'public.cancel_band_request(uuid)', 'public.respond_band_join(uuid, uuid, boolean)',
-    'public.set_band_member(uuid, uuid, text, text, text)', 'public.remove_band_member(uuid, uuid)', 'public.published_festivals(uuid)'
+    'public.set_band_member(uuid, uuid, text, text, text)', 'public.remove_band_member(uuid, uuid)', 'public.published_festivals(uuid)',
+    'public.remove_group_member(uuid, uuid)', 'public.admin_set_band_member(uuid, uuid, text)'
   ] loop
     execute format('revoke execute on function %s from public, anon', fn);
     execute format('grant execute on function %s to authenticated', fn);
