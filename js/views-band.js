@@ -29,6 +29,86 @@ window.Views = window.Views || {};
   const canEdit = (band) => !!band && Store.Bands.canEdit(band.id);
   V.canEditBand = canEdit;
 
+  /* ---------------- 로고 자르기: 끌어서 위치, 슬라이더로 확대 → 정사각형 이미지로 저장 ---------------- */
+  function logoCropper(root, getColor, onChange) {
+    const cv = root.querySelector('canvas'), ctx = cv.getContext('2d'), zr = root.querySelector('#cz');
+    const S = cv.width, OUT = 400;
+    let img = null, base = 1, sc = 1, ox = 0, oy = 0;   // base = '전체 보이기' 배율, sc = 지금 배율, ox/oy = 이미지 왼쪽 위
+    const clamp = () => {
+      const w = img.width * sc, h = img.height * sc;
+      ox = Math.min(Math.max(0, S - w), Math.max(Math.min(0, S - w), ox));
+      oy = Math.min(Math.max(0, S - h), Math.max(Math.min(0, S - h), oy));
+    };
+    const draw = () => {
+      if (!img) return;
+      ctx.clearRect(0, 0, S, S);
+      ctx.fillStyle = getColor(); ctx.fillRect(0, 0, S, S);
+      ctx.drawImage(img, ox, oy, img.width * sc, img.height * sc);
+    };
+    const bake = () => {
+      if (!img) return;
+      const c = document.createElement('canvas'); c.width = c.height = OUT;
+      const k = OUT / S, g = c.getContext('2d');
+      const full = img.width * sc >= S - 0.5 && img.height * sc >= S - 0.5;
+      if (full) { g.fillStyle = '#fff'; g.fillRect(0, 0, OUT, OUT); }
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(img, ox * k, oy * k, img.width * sc * k, img.height * sc * k);
+      // 꽉 차면 JPEG(작음), 빈 곳이 있으면 투명 PNG → 빈 곳에 밴드 색이 보임
+      onChange(full ? c.toDataURL('image/jpeg', .86) : c.toDataURL('image/png'));
+    };
+    const setScale = (ns, cx = S / 2, cy = S / 2) => {
+      ns = Math.min(base * Number(zr.max), Math.max(base, ns));
+      ox = cx - (cx - ox) * (ns / sc); oy = cy - (cy - oy) * (ns / sc); sc = ns;
+      zr.value = String(sc / base); clamp(); draw();
+    };
+    const fit = (mode) => {
+      const cover = Math.max(S / img.width, S / img.height);
+      sc = mode === 'contain' ? base : (mode === 'cover' ? cover : sc);
+      ox = (S - img.width * sc) / 2; oy = (S - img.height * sc) / 2;
+      zr.value = String(sc / base); clamp(); draw(); bake();
+    };
+    zr.oninput = () => setScale(base * Number(zr.value));
+    zr.onchange = bake;
+    root.querySelectorAll('[data-crop]').forEach((b) => b.onclick = () => img && fit(b.dataset.crop));
+
+    // 끌기 (마우스·터치 공통). 두 손가락이면 확대/축소
+    const pts = new Map(); let pinch = 0;
+    const toCanvas = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * S / r.width, (e.clientY - r.top) * S / r.height]; };
+    cv.addEventListener('pointerdown', (e) => { if (!img) return; cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, toCanvas(e)); pinch = 0; });
+    cv.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId), cur = toCanvas(e); pts.set(e.pointerId, cur);
+      if (pts.size >= 2) {
+        const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        if (pinch) setScale(sc * d / pinch, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+        pinch = d; return;
+      }
+      ox += cur[0] - prev[0]; oy += cur[1] - prev[1]; clamp(); draw();
+    });
+    const up = (e) => { if (pts.delete(e.pointerId) && !pts.size) bake(); pinch = 0; };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    let wt;
+    cv.addEventListener('wheel', (e) => {
+      if (!img) return; e.preventDefault();
+      const [x, y] = toCanvas(e); setScale(sc * (e.deltaY < 0 ? 1.08 : 1 / 1.08), x, y);
+      clearTimeout(wt); wt = setTimeout(bake, 250);
+    }, { passive: false });
+
+    return {
+      load: (src) => new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => {
+          img = im; base = Math.min(S / im.width, S / im.height);
+          zr.max = String(Math.max(4, (Math.max(S / im.width, S / im.height) / base) * 4));
+          root.hidden = false; fit('cover'); res();
+        };
+        im.onerror = rej; im.src = src;
+      }),
+      draw,
+      hide() { img = null; root.hidden = true; },
+    };
+  }
+
   /* ---------------- Band form (만들기 / 정보 수정) ---------------- */
   function bandForm(band) {
     const b = band || { name: '', genre: '', bio: '', color: '#111111', logo: '' };
@@ -51,14 +131,42 @@ window.Views = window.Views || {};
             </div>
           </div>
         </div>
+        <div class="crop" id="crop" hidden>
+          <div class="crop-stage"><canvas width="440" height="440"></canvas><span class="crop-ring"></span></div>
+          <div class="crop-ctl">
+            <span class="lbl">zoom</span>
+            <input type="range" id="cz" min="1" max="4" step="0.01" value="1" aria-label="확대">
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn sm" data-crop="cover">꽉 채우기</button>
+              <button type="button" class="btn sm" data-crop="contain">전체 보이기</button>
+              <button type="button" class="btn sm" data-crop="center">가운데로</button>
+            </div>
+            <p class="muted" style="font-size:12px;margin-top:8px">사진을 끌어서 위치를 맞추세요. 동그라미 안이 보이는 부분입니다.</p>
+          </div>
+        </div>
         <div class="field"><span class="lbl">introduction</span><textarea name="bio" maxlength="400">${esc(b.bio)}</textarea></div>
-        ${logoData ? '<button type="button" class="btn sm" id="rmLogo">로고 이미지 제거</button>' : ''}`,
+        <div class="row" style="gap:6px">
+          <button type="button" class="btn sm" id="adjLogo" ${logoData ? '' : 'hidden'}>로고 위치 조정</button>
+          <button type="button" class="btn sm" id="rmLogo" ${logoData ? '' : 'hidden'}>로고 이미지 제거</button>
+        </div>`,
       submit: band ? '저장' : '만들기',
       onOpen(f) {
         const refresh = () => { f.querySelector('#lp').innerHTML = logo({ name: f.name.value || 'NEW', color: f.color.value, logo: logoData }, 'lg'); };
-        f.logoFile.onchange = async () => { if (f.logoFile.files[0]) { logoData = await UI.readImage(f.logoFile.files[0], 320); refresh(); } };
-        f.name.oninput = f.color.oninput = refresh;
-        const rm = f.querySelector('#rmLogo'); if (rm) rm.onclick = () => { logoData = ''; refresh(); rm.remove(); };
+        const adj = f.querySelector('#adjLogo'), rm = f.querySelector('#rmLogo');
+        const crop = logoCropper(f.querySelector('#crop'), () => f.color.value, (url) => { logoData = url; refresh(); });
+        const openCrop = async (src) => {
+          try { await crop.load(src); adj.hidden = true; rm.hidden = false; }
+          catch (e) { toast('이미지를 열 수 없습니다'); }
+        };
+        f.logoFile.onchange = async () => {
+          const file = f.logoFile.files[0]; if (!file) return;
+          try { await openCrop(await UI.readImage(file, 1200)); } catch (e) { toast('이미지를 열 수 없습니다'); }
+          f.logoFile.value = '';
+        };
+        adj.onclick = () => openCrop(logoData);
+        f.name.oninput = refresh;
+        f.color.oninput = () => { crop.draw(); refresh(); };
+        rm.onclick = () => { logoData = ''; crop.hide(); refresh(); rm.hidden = true; adj.hidden = true; };
       },
       async onSubmit(d, f) {
         if (!d.name.trim()) { toast('밴드 이름을 입력하세요'); return false; }
