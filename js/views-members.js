@@ -2,7 +2,7 @@
    Views — Members (관리자): 그룹 참여자 명단
    검색·필터 · 악기별 인원 · 소속 밴드 · 연락처
    회원 관리: 공동 관리자 지정/해제 · 밴드에 바로 넣기/빼기 · 단장 지정 · 그룹에서 내보내기
-   명단 CSV 내려받기
+   스프레드시트(구글 시트 · xlsx)로 내보내기 → sheet-export.js
    ========================================================= */
 window.Views = window.Views || {};
 (() => {
@@ -94,22 +94,6 @@ window.Views = window.Views || {};
     });
   }
 
-  /** 명단 CSV (엑셀에서 한글이 깨지지 않게 BOM 포함) */
-  function downloadCsv(rows, byUser) {
-    const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const lines = [['이름', '아이디', '권한', '악기', '전화번호', '소속 밴드', '가입일'].map(q).join(',')];
-    rows.forEach((r) => lines.push([
-      r.name, r.username, r.role === 'admin' ? '관리자' : '회원', (r.instruments || []).join(' / '), r.phone || '',
-      (byUser[r.user_id] || []).filter((x) => x.status === 'approved').map((x) => x.band.name + (x.role === 'leader' ? '(단장)' : '')).join(' / '), joined(r.joined_at),
-    ].map(q).join(',')));
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${(Store.Group.current || {}).name || 'group'}-회원명단-${Store.iso(new Date())}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-
   /* ================= MEMBERS (관리자) ================= */
   V.members = (el) => {
     const G = Store.Group;
@@ -132,7 +116,7 @@ window.Views = window.Views || {};
     });
     const count = { all: roster.length, admin: roster.filter((r) => r.role === 'admin').length, leader: roster.filter(isLeader).length, noband: roster.filter((r) => !hasBand(r)).length };
 
-    el.innerHTML = V.pageHead(['members', esc((G.current || {}).name || '')], 'MEMBERS', 'Members', '<button class="btn" id="csv">명단 CSV</button>') + `
+    el.innerHTML = V.pageHead(['members', esc((G.current || {}).name || '')], 'MEMBERS', 'Members', '<button class="btn" id="csv">스프레드시트로 내보내기</button>') + `
       <div class="stats" style="border-top:1px solid var(--line);margin-bottom:24px">
         <div class="stat"><span class="lbl">members</span><b class="num">${count.all}</b></div>
         <div class="stat"><span class="lbl">admins</span><b class="num">${count.admin}</b></div>
@@ -158,7 +142,7 @@ window.Views = window.Views || {};
         }).join('') || '<p class="muted" style="padding:16px 0">조건에 맞는 회원이 없습니다.</p>'}
       </div>`;
 
-    el.querySelector('#csv').onclick = () => { downloadCsv(shown, byUser); toast(`${shown.length}명 명단을 내려받았습니다`); };
+    el.querySelector('#csv').onclick = () => SheetExport.open({ members: shown });
     const q = el.querySelector('#q');
     q.oninput = () => { search = q.value; const pos = q.selectionStart; App.render(); const nq = document.getElementById('q'); if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); } };
     el.querySelectorAll('[data-f]').forEach((a) => a.onclick = (e) => { e.preventDefault(); filter = a.dataset.f; App.render(); });
