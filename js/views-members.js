@@ -21,6 +21,34 @@ window.Views = window.Views || {};
   }
   const joined = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
 
+  /** 관리자: 회원 악기 수정 (이름·아이디·비밀번호·전화번호는 본인만) */
+  function editInstruments(r, myBands) {
+    const { INSTRUMENTS } = UI;
+    const mine = r.instruments || [];
+    const extra = mine.filter((i) => !INSTRUMENTS.includes(i));
+    const back = () => setTimeout(() => manage(Store.Group.person(r.user_id) || r, bandsByUser()[r.user_id] || myBands), 50);
+    modal({
+      title: `${esc(r.name)} — 악기 수정`,
+      body: `
+        <div class="field"><span class="lbl">악기 (여러 개 선택)</span>
+          <div class="pick-grid">${INSTRUMENTS.map((i) => `<label class="pick"><input type="checkbox" name="inst" value="${i}" ${mine.includes(i) ? 'checked' : ''}><span>${i}</span></label>`).join('')}</div>
+          <input name="instExtra" maxlength="60" value="${esc(extra.join(', '))}" placeholder="그 밖의 악기 (쉼표로 구분)" style="margin-top:8px">
+        </div>
+        <p class="muted" style="font-size:12px">회원이 잘못 고른 악기를 관리자가 바로잡습니다. 이름·아이디·비밀번호·전화번호는 본인만 바꿀 수 있습니다.</p>`,
+      submit: '저장',
+      async onSubmit(d, f) {
+        const list = [...new Set([...f.querySelectorAll('input[name=inst]:checked')].map((x) => x.value)
+          .concat(f.instExtra.value.split(',').map((s) => s.trim()).filter(Boolean)))];
+        if (list.length > 10) { toast('악기는 10개까지 입력할 수 있습니다'); return false; }
+        const btn = f.querySelector('button[type=submit]');
+        btn.disabled = true;
+        try { await Store.Group.setInstruments(r.user_id, list); toast('악기 정보를 수정했습니다'); back(); }
+        catch (e) { toast(e.message); btn.disabled = false; return false; }
+      },
+      onOpen(f) { f.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', back)); },
+    });
+  }
+
   /** 회원 관리 창 */
   function manage(r, myBands) {
     const me = Store.Auth.user.id;
@@ -36,7 +64,8 @@ window.Views = window.Views || {};
           <div>
             <b style="font-size:20px">${esc(r.name)}</b> ${r.role === 'admin' ? '<span class="chip ink">관리자</span>' : ''}
             <p class="muted" style="font-size:13px">@${esc(r.username)} · ${joined(r.joined_at)} 가입</p>
-            <p style="margin-top:6px">${(r.instruments || []).map((i) => `<span class="chip">${esc(i)}</span>`).join(' ') || '<span class="muted">악기 정보 없음</span>'}</p>
+            <p style="margin-top:6px">${(r.instruments || []).map((i) => `<span class="chip">${esc(i)}</span>`).join(' ') || '<span class="muted">악기 정보 없음</span>'}
+              <button type="button" class="btn sm ghost" id="editInst" style="margin-left:4px">악기 수정</button></p>
             <p style="margin-top:6px">${r.phone ? `📞 <a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : '<span class="muted">전화번호 없음</span>'}</p>
           </div>
         </div>
@@ -70,6 +99,7 @@ window.Views = window.Views || {};
           try { await fn(); toast(msg); close(); setTimeout(() => manage(Store.Group.roster.find((x) => x.user_id === r.user_id) || r, bandsByUser()[r.user_id] || []), 50); }
           catch (e) { toast(e.message); btn.disabled = false; }
         };
+        f.querySelector('#editInst').onclick = () => { close(); editInstruments(r, myBands); };
         f.querySelectorAll('[data-role]').forEach((b) => b.onclick = () => run(b, () => Store.Bands.adminSet(b.dataset.role, r.user_id, b.dataset.to), b.dataset.to === 'leader' ? '단장으로 지정했습니다' : '부원으로 바꿨습니다'));
         f.querySelectorAll('[data-out]').forEach((b) => b.onclick = () => run(b, () => Store.Bands.removeMember(b.dataset.out, r.user_id), '밴드에서 뺐습니다'));
         const ag = f.querySelector('#addGo');

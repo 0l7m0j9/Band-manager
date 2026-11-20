@@ -717,6 +717,22 @@ begin
    where group_id = p_group and user_id = p_user;
 end $$;
 
+-- 관리자: 회원의 악기 정보 수정 (잘못·장난으로 고른 악기 바로잡기). 이름·아이디·비밀번호·전화번호는 못 바꿈
+create or replace function public.admin_set_instruments(p_group uuid, p_user uuid, p_instruments text[]) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  ins text[];
+begin
+  if not public.is_group_admin(p_group) then raise exception '관리자만 할 수 있습니다'; end if;
+  if not exists (select 1 from public.group_members where group_id = p_group and user_id = p_user) then
+    raise exception '그룹 회원이 아닙니다';
+  end if;
+  select coalesce(array_agg(distinct left(trim(x), 20)), '{}') into ins
+    from unnest(coalesce(p_instruments, '{}')) as x where trim(x) <> '';
+  if coalesce(array_length(ins, 1), 0) > 10 then raise exception '악기는 10개까지 입력할 수 있습니다'; end if;
+  update public.profiles set instruments = ins where id = p_user;
+end $$;
+
 -- 밴드 만들기: 만든 사람이 단장
 create or replace function public.create_band(p_group uuid, p_name text, p_genre text, p_color text, p_bio text)
 returns uuid
@@ -879,7 +895,8 @@ begin
     'public.group_roster(uuid)', 'public.set_group_admin(uuid, uuid, boolean)', 'public.create_band(uuid, text, text, text, text)',
     'public.request_band_join(uuid, text)', 'public.cancel_band_request(uuid)', 'public.respond_band_join(uuid, uuid, boolean)',
     'public.set_band_member(uuid, uuid, text, text, text)', 'public.remove_band_member(uuid, uuid)', 'public.published_festivals(uuid)',
-    'public.remove_group_member(uuid, uuid)', 'public.admin_set_band_member(uuid, uuid, text)'
+    'public.remove_group_member(uuid, uuid)', 'public.admin_set_band_member(uuid, uuid, text)',
+    'public.admin_set_instruments(uuid, uuid, text[])'
   ] loop
     execute format('revoke execute on function %s from public, anon', fn);
     execute format('grant execute on function %s to authenticated', fn);

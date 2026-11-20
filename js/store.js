@@ -548,6 +548,13 @@ const Store = (() => {
       if (error) throw new Error(errMsg(error));
       await reload('me');
     },
+    /** 관리자: 회원 악기 정보 수정 */
+    async setInstruments(userId, instruments) {
+      const { error } = await sb.rpc('admin_set_instruments', { p_group: gid, p_user: userId, p_instruments: instruments });
+      if (error) throw new Error(errMsg(error));
+      await reload('roster');
+      if (user && userId === user.id) { await loadProfile(); emitAuth(); }
+    },
     /** 관리자: 그룹에서 내보내기 */
     async removeMember(userId) {
       const { error } = await sb.rpc('remove_group_member', { p_group: gid, p_user: userId });
