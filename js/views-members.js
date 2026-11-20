@@ -135,15 +135,29 @@ window.Views = window.Views || {};
     const instCount = {};
     roster.forEach((r) => (r.instruments || []).forEach((i) => { instCount[i] = (instCount[i] || 0) + 1; }));
     const instList = Object.entries(instCount).sort((a, b) => b[1] - a[1]);
-    const s = search.trim().toLowerCase();
-    const shown = roster.filter((r) => {
-      if (filter === 'admin' && r.role !== 'admin') return false;
-      if (filter === 'leader' && !isLeader(r)) return false;
-      if (filter === 'noband' && hasBand(r)) return false;
-      if (inst && !(r.instruments || []).includes(inst)) return false;
-      if (s && !`${r.name} ${r.username} ${(r.instruments || []).join(' ')} ${(byUser[r.user_id] || []).map((x) => x.band.name).join(' ')}`.toLowerCase().includes(s)) return false;
-      return true;
-    });
+    const filtered = () => {
+      const s = search.trim().toLowerCase();
+      return roster.filter((r) => {
+        if (filter === 'admin' && r.role !== 'admin') return false;
+        if (filter === 'leader' && !isLeader(r)) return false;
+        if (filter === 'noband' && hasBand(r)) return false;
+        if (inst && !(r.instruments || []).includes(inst)) return false;
+        if (s && !`${r.name} ${r.username} ${(r.instruments || []).join(' ')} ${(byUser[r.user_id] || []).map((x) => x.band.name).join(' ')}`.toLowerCase().includes(s)) return false;
+        return true;
+      });
+    };
+    let shown = filtered();
+    const listHtml = () => shown.map((r) => {
+      const bs = (byUser[r.user_id] || []).filter((x) => x.status === 'approved');
+      return `<button type="button" class="mem-row" data-u="${r.user_id}">
+        <span class="avatar">${esc(UI.initials(r.name))}</span>
+        <span class="mem-main"><b>${esc(r.name)}${r.role === 'admin' ? ' <span class="chip ink">관리자</span>' : ''}${isLeader(r) ? ' <span class="chip">단장</span>' : ''}</b>
+          <small>@${esc(r.username)} · ${esc((r.instruments || []).join(', ') || '악기 없음')}</small></span>
+        <span class="mem-bands hide-sm">${bs.map((x) => `<span class="chip ${x.role === 'leader' ? 'lime' : ''}">${x.role === 'leader' ? '★ ' : ''}${esc(x.band.name)}</span>`).join(' ') || '<span class="muted" style="font-size:12px">밴드 없음</span>'}</span>
+        <span class="mem-phone num hide-sm">${esc(r.phone || '—')}</span>
+        <span class="mem-go" aria-hidden="true">›</span>
+      </button>`;
+    }).join('') || '<p class="muted" style="padding:16px 0">조건에 맞는 회원이 없습니다.</p>';
     const count = { all: roster.length, admin: roster.filter((r) => r.role === 'admin').length, leader: roster.filter(isLeader).length, noband: roster.filter((r) => !hasBand(r)).length };
 
     el.innerHTML = V.pageHead(['members', esc((G.current || {}).name || '')], 'MEMBERS', 'Members', '<button class="btn" id="csv">스프레드시트로 내보내기</button>') + `
@@ -158,25 +172,16 @@ window.Views = window.Views || {};
         <input class="input" id="q" type="search" placeholder="이름 · 아이디 · 악기 · 밴드로 검색" value="${esc(search)}" style="flex:1 1 220px">
         <nav class="tabs" style="margin:0">${FILTERS.map(([k, v]) => `<a href="#" data-f="${k}" class="${filter === k ? 'on' : ''}">${v} ${count[k]}</a>`).join('')}</nav>
       </div>
-      <div class="mem-list">
-        ${shown.map((r) => {
-          const bs = (byUser[r.user_id] || []).filter((x) => x.status === 'approved');
-          return `<button type="button" class="mem-row" data-u="${r.user_id}">
-            <span class="avatar">${esc(UI.initials(r.name))}</span>
-            <span class="mem-main"><b>${esc(r.name)}${r.role === 'admin' ? ' <span class="chip ink">관리자</span>' : ''}${isLeader(r) ? ' <span class="chip">단장</span>' : ''}</b>
-              <small>@${esc(r.username)} · ${esc((r.instruments || []).join(', ') || '악기 없음')}</small></span>
-            <span class="mem-bands hide-sm">${bs.map((x) => `<span class="chip ${x.role === 'leader' ? 'lime' : ''}">${x.role === 'leader' ? '★ ' : ''}${esc(x.band.name)}</span>`).join(' ') || '<span class="muted" style="font-size:12px">밴드 없음</span>'}</span>
-            <span class="mem-phone num hide-sm">${esc(r.phone || '—')}</span>
-            <span class="mem-go" aria-hidden="true">›</span>
-          </button>`;
-        }).join('') || '<p class="muted" style="padding:16px 0">조건에 맞는 회원이 없습니다.</p>'}
-      </div>`;
+      <div class="mem-list">${listHtml()}</div>`;
 
     el.querySelector('#csv').onclick = () => SheetExport.open({ members: shown });
+    // 검색창은 다시 그리지 않고 아래 목록만 바꿈 → 한글 조합(ㅂ+ㅏ→바)이 끊기지 않음
+    const list = el.querySelector('.mem-list');
+    const bindRows = () => list.querySelectorAll('[data-u]').forEach((b) => b.onclick = () => manage(roster.find((r) => r.user_id === b.dataset.u), byUser[b.dataset.u] || []));
     const q = el.querySelector('#q');
-    q.oninput = () => { search = q.value; const pos = q.selectionStart; App.render(); const nq = document.getElementById('q'); if (nq) { nq.focus(); nq.setSelectionRange(pos, pos); } };
+    q.oninput = () => { search = q.value; shown = filtered(); list.innerHTML = listHtml(); bindRows(); };
     el.querySelectorAll('[data-f]').forEach((a) => a.onclick = (e) => { e.preventDefault(); filter = a.dataset.f; App.render(); });
     el.querySelectorAll('[data-inst]').forEach((b) => b.onclick = () => { inst = inst === b.dataset.inst ? '' : b.dataset.inst; App.render(); });
-    el.querySelectorAll('[data-u]').forEach((b) => b.onclick = () => manage(roster.find((r) => r.user_id === b.dataset.u), byUser[b.dataset.u] || []));
+    bindRows();
   };
 })();

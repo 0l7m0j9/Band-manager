@@ -146,14 +146,22 @@ const App = (() => {
 
   lastRoute = location.hash.split('/').slice(0, 3).join('/');
   render();
-  // 서버 데이터가 바뀌면 다시 그림. 입력 중인 창이 열려 있으면 닫힐 때까지 미룸
+  // 서버 데이터가 바뀌면 다시 그림. 입력 중인 창이 열려 있거나, 화면의 글자 칸에 입력 중이면
+  // (한글 조합 중 다시 그리면 'ㅂㅏ'처럼 끊김) 끝날 때까지 미룸
   let pendingRender = false;
+  const typing = () => {
+    const a = document.activeElement;
+    if (!a || !view.contains(a)) return false;
+    return a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && /^(text|search|email|tel|url|password|number|)$/i.test(a.type || ''));
+  };
   const safeRender = () => {
-    if (document.querySelector('#modal-root .modal')) { pendingRender = true; return; }
+    if (document.querySelector('#modal-root .modal') || typing()) { pendingRender = true; return; }
     pendingRender = false; render();
   };
   new MutationObserver(() => { if (pendingRender && !document.querySelector('#modal-root .modal')) safeRender(); })
     .observe(document.getElementById('modal-root'), { childList: true });
+  // 글자 칸에서 나가면 미뤄 둔 화면 갱신 (다음 칸으로 포커스가 옮겨진 뒤 판단)
+  view.addEventListener('focusout', () => setTimeout(() => { if (pendingRender) safeRender(); }, 0));
   Store.onRemote(safeRender);
   Store.Auth.onChange(safeRender);
 
