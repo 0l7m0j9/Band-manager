@@ -1,8 +1,8 @@
 /* =========================================================
    App — 해시 라우터 + 계급별 메뉴
-     부원 : Home · Bands · Calendar
+     부원 : Home · Bands · Practice · Calendar
      단장 : + Rooms
-     관리자: Home · Bands · Calendar · Rooms · Festival · Board
+     관리자: + Festival · Board · Members
    ========================================================= */
 const App = (() => {
   const view = document.getElementById('view');
@@ -10,9 +10,9 @@ const App = (() => {
   const A = Store.Auth, G = Store.Group;
   const ROLE = { admin: '관리자', leader: '단장', member: '부원' };
   const NAV = {
-    member: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar']],
-    leader: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms']],
-    admin: [['home', 'Home'], ['bands', 'Bands'], ['calendar', 'Calendar'], ['rooms', 'Rooms'], ['festivals', 'Festival'], ['board', 'Board'], ['members', 'Members']],
+    member: [['home', 'Home'], ['bands', 'Bands'], ['practice', 'Practice'], ['calendar', 'Calendar']],
+    leader: [['home', 'Home'], ['bands', 'Bands'], ['practice', 'Practice'], ['calendar', 'Calendar'], ['rooms', 'Rooms']],
+    admin: [['home', 'Home'], ['bands', 'Bands'], ['practice', 'Practice'], ['calendar', 'Calendar'], ['rooms', 'Rooms'], ['festivals', 'Festival'], ['board', 'Board'], ['members', 'Members']],
   };
   const BAND_TABS = [['studio', 'Studio'], ['setlist', 'Setlist'], ['rehearsal', 'Rehearsal'], ['progress', 'Progress']];
   const ADMIN_ONLY = new Set(['festivals', 'festival', 'timetable', 'personal', 'board', 'members']);
@@ -122,7 +122,7 @@ const App = (() => {
       if (name === 'band') key = 'bands';
       if (name === 'festival' || name === 'timetable') key = 'festivals';
       const routes = {
-        home: V.home, bands: V.bands, calendar: V.calendar, rooms: V.rooms, board: V.board, account: V.account, members: V.members,
+        home: V.home, bands: V.bands, calendar: V.calendar, rooms: V.rooms, board: V.board, account: V.account, members: V.members, practice: V.practice,
         festivals: V.festivals, festival: V.festival, timetable: V.timetable,
       };
       if (name !== 'band' && !routes[name]) { name = 'home'; key = 'home'; }

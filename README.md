@@ -21,9 +21,9 @@
 ## 계급과 메뉴
 | 계급 | 정하는 방법 | 상단 메뉴 |
 |---|---|---|
-| **관리자** | 최초 관리자(SQL) / 관리자가 지정 | Home · Bands · Calendar · Rooms · Festival · Board · Members |
-| **단장** | 밴드를 만든 사람, 또는 단장이 지정한 밴드원 | Home · Bands · Calendar · Rooms |
-| **부원** | 그 외 모든 회원 | Home · Bands · Calendar |
+| **관리자** | 최초 관리자(SQL) / 관리자가 지정 | Home · Bands · Practice · Calendar · Rooms · Festival · Board · Members |
+| **단장** | 밴드를 만든 사람, 또는 단장이 지정한 밴드원 | Home · Bands · Practice · Calendar · Rooms |
+| **부원** | 그 외 모든 회원 | Home · Bands · Practice · Calendar |
 
 권한이 없는 메뉴는 주소로 직접 들어가도 Home으로 돌아갑니다. 실제 권한은 서버(Supabase RLS)가 검사하므로, 화면을 우회해도 데이터는 바뀌지 않습니다.
 
@@ -48,6 +48,12 @@
   - **단장·관리자**: 곡·세트리스트·합주·과제·공연 기록·밴드 정보 수정, **가입 신청 승인/거절**, 밴드원 파트·포지션·단장 지정, 내보내기
   - **관리자**: 밴드 삭제
 - 예전 기능(곡 검색·후보곡 투표·세트리스트 자동 구성·공연 흐름·합주 캘린더·진행도)은 그대로 있습니다.
+
+### Practice (모두)
+- 내가 속한 **모든 밴드의 곡**을 밴드별로 모아 봅니다 (후보곡 제외). 위에 곡 수·연습 중·완성·내 평균
+- 곡을 누르면 펼쳐져서 **내 진도(0~100%)**와 **메모**(코드·주의할 부분 등)를 적습니다. 적으면 자동 저장
+- 펼친 곳에서 BPM·난이도·밴드 진행도·들어간 세트리스트·미리듣기(있으면)도 확인
+- 진도·메모는 **본인만** 볼 수 있습니다 (단장·관리자도 못 봄)
 
 ### Calendar (모두)
 - 월 달력에서 날짜를 누르면 그날의 **시간표**가 나옵니다 (아이폰 캘린더처럼). 빈 시간을 누르면 그 시간으로 일정 추가
@@ -128,6 +134,7 @@ js/ui.js                   모달·토스트·날짜·이미지·보기 전용 �
 js/poster.js               포스터 디자인 엔진 (Canvas)
 js/views-home.js           Home
 js/views-band.js           Bands 목록 · 밴드 Studio / Setlist / Rehearsal / Progress
+js/views-practice.js       Practice: 내 밴드 곡 모음 + 나만의 진도·메모
 js/views-calendar.js       Calendar (+ 일정 모음, 작은 달력)
 js/views-rooms.js          Rooms (연습실 예약·승인)
 js/views-festival.js       Festival (관리자) + 공개 스위치 · Setlists

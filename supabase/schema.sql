@@ -816,6 +816,7 @@ begin
   if p_user = auth.uid() then raise exception '자기 자신은 내보낼 수 없습니다'; end if;
   delete from public.band_members where user_id = p_user and band_id in (select id from public.bands where group_id = p_group);
   delete from public.events where owner = p_user and group_id = p_group and scope = 'personal';
+  delete from public.song_notes where user_id = p_user and band_id in (select id from public.bands where group_id = p_group);
   delete from public.group_members where group_id = p_group and user_id = p_user;
 end $$;
 
@@ -832,6 +833,39 @@ begin
   end if;
   insert into public.band_members (band_id, user_id, role, status) values (p_band, p_user, p_role, 'approved')
   on conflict (band_id, user_id) do update set role = excluded.role, status = 'approved';
+end $$;
+
+-- ---------- 내 연습 노트 (Practice 탭): 곡마다 나만의 진도·메모. 본인만 보고 씀 ----------
+create table if not exists public.song_notes (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  band_id    uuid not null references public.bands(id) on delete cascade,
+  song_id    text not null check (length(song_id) between 1 and 64),
+  progress   int  not null default 0 check (progress between 0 and 100),
+  memo       text not null default '' check (length(memo) <= 2000),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, band_id, song_id)
+);
+alter table public.song_notes enable row level security;
+revoke all on public.song_notes from anon;
+revoke insert, update, delete on public.song_notes from authenticated;
+grant select on public.song_notes to authenticated;
+drop policy if exists "notes read own" on public.song_notes;
+create policy "notes read own" on public.song_notes for select to authenticated using (user_id = auth.uid());
+
+-- 저장은 이 함수로만: 승인된 밴드원만, 길이 제한
+create or replace function public.save_song_note(p_band uuid, p_song text, p_progress int, p_memo text) returns timestamptz
+language plpgsql security definer set search_path = public as $$
+declare
+  t timestamptz := now();
+begin
+  if auth.uid() is null then raise exception '로그인이 필요합니다'; end if;
+  if not public.is_band_member(p_band) then raise exception '이 밴드의 밴드원만 기록할 수 있습니다'; end if;
+  if p_song is null or length(p_song) < 1 or length(p_song) > 64 then raise exception '잘못된 곡입니다'; end if;
+  insert into public.song_notes (user_id, band_id, song_id, progress, memo, updated_at)
+  values (auth.uid(), p_band, p_song, least(100, greatest(0, coalesce(p_progress, 0))), left(coalesce(p_memo, ''), 2000), t)
+  on conflict (user_id, band_id, song_id) do update
+    set progress = excluded.progress, memo = excluded.memo, updated_at = excluded.updated_at;
+  return t;
 end $$;
 
 -- 공개된 페스티벌 (부원용). 공개하지 않은 내용은 빼고 돌려줌
@@ -896,7 +930,7 @@ begin
     'public.request_band_join(uuid, text)', 'public.cancel_band_request(uuid)', 'public.respond_band_join(uuid, uuid, boolean)',
     'public.set_band_member(uuid, uuid, text, text, text)', 'public.remove_band_member(uuid, uuid)', 'public.published_festivals(uuid)',
     'public.remove_group_member(uuid, uuid)', 'public.admin_set_band_member(uuid, uuid, text)',
-    'public.admin_set_instruments(uuid, uuid, text[])'
+    'public.admin_set_instruments(uuid, uuid, text[])', 'public.save_song_note(uuid, text, int, text)'
   ] loop
     execute format('revoke execute on function %s from public, anon', fn);
     execute format('grant execute on function %s to authenticated', fn);

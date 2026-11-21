@@ -104,6 +104,7 @@ const Store = (() => {
   let bandsMeta = [];      // bands 행
   let bandMembers = [];    // band_members 행 (보이는 것만)
   let posts = [], events = [], rooms = [], reservations = [], pubFests = [];
+  let notes = new Map(), notesReady = false;  // 내 연습 노트 'bandId:songId' → { progress, memo, updated_at }
   const docs = new Map();  // 'band:<id>' | 'fest:<id>' → { kind, id, data, rev, baseStr, lastStr, dirty, failCount, timer, retry, published }
   let db = emptyDb();
   let listeners = [], authListeners = [], remoteListeners = [];
@@ -322,7 +323,14 @@ const Store = (() => {
       const ids = bandsMeta.map((x) => x.id);
       bandMembers = ids.length ? await q(sb.from('band_members').select('*').in('band_id', ids)) : [];
       await loadDocs();
+      await loadNotes();
     } finally { loading = false; }
+  }
+  /** 내 연습 노트. 표가 아직 없으면(schema.sql 다시 실행 전) 조용히 빈 채로 */
+  async function loadNotes() {
+    const { data, error } = await sb.from('song_notes').select('band_id,song_id,progress,memo,updated_at').eq('user_id', user.id);
+    notesReady = !error;
+    notes = new Map((error ? [] : data || []).map((n) => [`${n.band_id}:${n.song_id}`, { progress: n.progress, memo: n.memo || '', updated_at: n.updated_at }]));
   }
   /** 읽을 수 있는 밴드 문서(내 밴드, 관리자는 전부) + 페스티벌(관리자) */
   async function loadDocs() {
@@ -450,7 +458,7 @@ const Store = (() => {
   function detach() {
     if (channel && sb) sb.removeChannel(channel);
     channel = null; user = null; profile = null; groups = []; gid = null;
-    roster = []; bandsMeta = []; bandMembers = []; posts = []; events = []; rooms = []; reservations = []; pubFests = [];
+    roster = []; bandsMeta = []; bandMembers = []; posts = []; events = []; rooms = []; reservations = []; pubFests = []; notes = new Map(); notesReady = false;
     docs.clear(); db = emptyDb();
     emitAuth(); emitRemote();
   }
@@ -631,6 +639,22 @@ const Store = (() => {
     },
     async remove(id) { await must(sb.from('events').delete().eq('id', id)); await reload('events'); },
   };
+  /** 내 연습 노트 (Practice 탭) — 본인만 보고 씀. 저장해도 화면을 다시 그리지 않음 */
+  const Practice = {
+    get ready() { return notesReady; },
+    note: (bandId, songId) => notes.get(`${bandId}:${songId}`) || null,
+    async save(bandId, songId, { progress, memo }) {
+      const p = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+      const m = String(memo || '').slice(0, 2000);
+      const { data, error } = await sb.rpc('save_song_note', { p_band: bandId, p_song: String(songId), p_progress: p, p_memo: m });
+      if (error) {
+        if (/save_song_note|function .* does not exist|schema cache/i.test(error.message || '')) throw new Error('관리자가 supabase/schema.sql 을 다시 실행해야 저장할 수 있습니다');
+        throw new Error(errMsg(error));
+      }
+      notes.set(`${bandId}:${songId}`, { progress: p, memo: m, updated_at: data || new Date().toISOString() });
+      notesReady = true;
+    },
+  };
   const Rooms = {
     get list() { return rooms; },
     get reservations() { return reservations; },
@@ -743,7 +767,7 @@ const Store = (() => {
     onChange(fn) { listeners.push(fn); },
     onRemote(fn) { remoteListeners.push(fn); },
     initRemote,
-    Auth, Group, Bands, Events, Rooms, Posts, Festivals, Legacy, AI: null,
+    Auth, Group, Bands, Events, Rooms, Posts, Festivals, Legacy, Practice, AI: null,
 
     // 예전 화면 코드가 쓰는 도우미
     band(id = db.activeBandId) { return db.bands.find((b) => b.id === id) || null; },
